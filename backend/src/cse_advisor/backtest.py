@@ -9,7 +9,7 @@ first). After a fill: stop vs T1, whichever is hit first, else exit at the close
 Costs: brokerage + slippage per side from settings (1.32% by default). The same stock + engine is not
 re-entered within 10 sessions. History comes from TradingView's daily bars (already adjusted for rights,
 bonus and splits; real opens), cached under data/backtests/cache. Fundamentals and news are not used
-(their history isn't available), so the Original engine's score is technical only, as in the earlier study.
+(their history isn't available), so the Classic engine's score is technical only, as in the earlier study.
 Results are split by year and by market regime (ASPI above / below its 200-day average).
 """
 from __future__ import annotations
@@ -225,7 +225,7 @@ def report(df: pd.DataFrame, meta: dict[str, Any]) -> str:
         return out
 
     lines += ["## Verdicts", ""]
-    vc = pd.DataFrame({e: v[k].value_counts() for e, k in (("Original", "orig"), ("Analyst", "anly"), ("SMC", "smc"))}).fillna(0).astype(int)
+    vc = pd.DataFrame({e: v[k].value_counts() for e, k in (("Classic", "orig"), ("Levels", "anly"), ("SMC", "smc"))}).fillna(0).astype(int)
     lines += table(vc) + ["", f"Agreement: " + ", ".join(f"{k} {x * 100:.1f}%" for k, x in v.agree.value_counts(normalize=True).items()), ""]
     if tr.empty:
         return "\n".join(lines + ["No trades were simulated."])

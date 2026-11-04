@@ -76,7 +76,7 @@ def _nearest_support(zones: list[dict], price: float) -> dict | None:
 
 
 def find_setups(df: pd.DataFrame, patterns: list[dict], zones: list[dict], trend: dict) -> list[dict[str, Any]]:
-    """Original engine setups: pattern breakouts, pending breakouts, reversals at support, pullbacks."""
+    """Classic engine setups: pattern breakouts, pending breakouts, reversals at support, pullbacks."""
     last = df.iloc[-1]
     close, atr = float(last["close"]), float(last["atr"])
     n = len(df)
@@ -274,9 +274,9 @@ def build_plan(setup: dict, df: pd.DataFrame, zones: list[dict], profile: dict, 
     }
 
 
-# ============================================================================ Original engine
+# ============================================================================ Classic engine (id: original)
 def original_patterns(patterns: list[dict]) -> list[dict]:
-    """Patterns the Original engine scores: everything except the analyst- and SMC-engine drawings."""
+    """Patterns the Classic engine scores: everything except the analyst- and SMC-engine drawings."""
     return [p for p in patterns if p.get("engine", "original") == "original" and p.get("category") != "level"]
 
 
@@ -326,7 +326,7 @@ def recommend_original(symbol: str, name: str, df: pd.DataFrame, trend: dict, pa
         verdict = "WATCH"
     expl = _explain(symbol, name, verdict, score, comps, trend, patterns, liquidity, fundamentals, news, market,
                     plan, setups, checklist, close, atr, df, review, previous, red_flags, fund_flags)
-    return {"engine": "original", "label": "Original", "verdict": verdict, "score": score, "components": comps,
+    return {"engine": "original", "label": "Classic", "verdict": verdict, "score": score, "components": comps,
             "plan": plan, "entries": [], "setups": setups[:6], "checklist": checklist, "red_flags": red_flags,
             "fundamental_flags": fund_flags, "position_review": review, "explanation": expl,
             "close": close, "date": tkey(df.index[-1])}
@@ -347,7 +347,7 @@ def agreement(a: str, b: str, c: str | None = None) -> dict[str, str]:
         state = "differ"
     else:
         state = "mixed"
-    text = f"{AGREE_TEXT[state]}: Original {a}, Analyst {b}" + (f", SMC {c}" if c else "") + "."
+    text = f"{AGREE_TEXT[state]}: Classic {a}, Levels {b}" + (f", SMC {c}" if c else "") + "."
     return {"state": state, "text": text}
 
 
@@ -405,7 +405,7 @@ def _explain(symbol, name, verdict, score, comps, trend, patterns, liquidity, fu
     # patterns (recent / active only)
     for p in patterns:
         if p.get("engine") == "analyst" or p.get("category") == "level":
-            continue   # analyst-engine drawings are explained by the Analyst engine
+            continue   # analyst-engine drawings are explained by the Levels engine
         if p["status"] not in ("confirmed", "forming") or p["context"].get("age_bars", 99) > 15 or p["priority"] < 35:
             continue
         txt = f"{p['name']} ({p['status']}, priority {p['priority']:.0f}): {p['explanation']}"
@@ -624,10 +624,15 @@ def split_engines(rec: dict | None) -> tuple[dict, dict | None]:
     return rec, None
 
 
+# What the user sees: engine ids stay "original" / "analyst" / "smc" (stored analyses, saved preferences, the API)
+ENGINE_TAG = {"original": "CLS", "analyst": "LVL", "smc": "SMC"}
+ENGINE_NAME = {"original": "Classic", "analyst": "Levels", "smc": "SMC"}
+
+
 def engine_recs(rec: dict | None) -> list[tuple[str, dict | None]]:
     """[(tag, engine result)] for the three engines; older rows lack the later engines."""
     ro, ra = split_engines(rec)
-    return [("ORIG", ro), ("ANLY", ra), ("SMC", (rec or {}).get("smc"))]
+    return [(ENGINE_TAG["original"], ro), (ENGINE_TAG["analyst"], ra), (ENGINE_TAG["smc"], (rec or {}).get("smc"))]
 
 
 def plan_summary(plan: dict | None) -> dict | None:

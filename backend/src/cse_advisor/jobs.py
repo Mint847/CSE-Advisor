@@ -182,10 +182,10 @@ def build_alerts(syms: list[str], prev: dict[str, dict[str, Any]], new_anns: lis
                     and p.get("verdict_smc") == a.verdict_smc:
                 p = None                                       # re-run on the same day: only verdict changes
             if p and p["verdict"] != a.verdict:
-                alerts.append({"symbol": sym, "kind": "signal_change", "text": f"[ORIG] {p['verdict']} → {a.verdict} (score {a.score:.0f})"})
+                alerts.append({"symbol": sym, "kind": "signal_change", "text": f"[CLS] {p['verdict']} → {a.verdict} (score {a.score:.0f})"})
             if p and a.verdict_analyst and p.get("verdict_analyst") and p["verdict_analyst"] != a.verdict_analyst:
                 alerts.append({"symbol": sym, "kind": "signal_change",
-                               "text": f"[ANLY] {p['verdict_analyst']} → {a.verdict_analyst} (level score {a.score_analyst or 0:.0f})"})
+                               "text": f"[LVL] {p['verdict_analyst']} → {a.verdict_analyst} (level score {a.score_analyst or 0:.0f})"})
             if p and a.verdict_smc and p.get("verdict_smc") and p["verdict_smc"] != a.verdict_smc:
                 alerts.append({"symbol": sym, "kind": "signal_change",
                                "text": f"[SMC] {p['verdict_smc']} → {a.verdict_smc} (SMC score {a.score_smc or 0:.0f})"})

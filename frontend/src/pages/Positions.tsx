@@ -75,7 +75,7 @@ export default function Positions() {
         {!rows ? <Spinner /> : open.length === 0 ? <p className="text-sm text-muted">No open positions.</p> : (
           <div className="overflow-x-auto">
             <table className="bb-table num">
-              <thead><tr><th>Stock</th><th>Qty</th><th>Entry</th><th>Price</th><th>P/L after fees</th><th>Stop</th><th>ORIG action</th><th>ANLY action</th><th>SMC action</th><th /></tr></thead>
+              <thead><tr><th>Stock</th><th>Qty</th><th>Entry</th><th>Price</th><th>P/L after fees</th><th>Stop</th><th>CLS action</th><th>LVL action</th><th>SMC action</th><th /></tr></thead>
               <tbody>
                 {open.map(p => {
                   const fig = pf?.rows[String(p.id)]

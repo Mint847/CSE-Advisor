@@ -44,7 +44,7 @@ export function analystGroups(a: Analysis, prefs: StockPrefs, analystPatterns: P
     key: 'avp', label: 'Anchored POC & value area', on: on('avp', 'avp'),
     sub: `POC ${fmt(ap.poc)} · VA ${fmt(ap.va_low)}–${fmt(ap.va_high)}${ap.anchor ? ` · from ${ap.anchor}` : ''}`,
   }] })
-  if (analystPatterns.length) groups.push({ title: 'Analyst patterns', layer: 'apat', items: analystPatterns.map(p => ({
+  if (analystPatterns.length) groups.push({ title: 'Levels-engine patterns', layer: 'apat', items: analystPatterns.map(p => ({
     key: p.id, patternId: p.id, label: `${DIR_ICON[p.direction]} ${p.name}`, on: isAnalystVisible(p), sub: `${p.status} · ${p.end} · priority ${p.priority.toFixed(0)}`,
   })) })
   return groups
@@ -213,18 +213,18 @@ export default function PatternDrawer(p: Props) {
         <p className="text-[11px] text-muted">{PRESETS.find(x => x.id === prefs.preset)?.desc ?? (prefs.preset === 'mine' ? 'Your saved default view' : 'Custom view')}</p>
         <div className="flex gap-1" role="navigation" aria-label="Jump to section">
           <span className="label self-center pr-1">Go to</span>
-          <button className="btn !py-0.5" onClick={() => jump('orig')}>1) Original</button>
-          <button className="btn !py-0.5" onClick={() => jump('anly')}>2) Analyst</button>
+          <button className="btn !py-0.5" onClick={() => jump('orig')}>1) Classic</button>
+          <button className="btn !py-0.5" onClick={() => jump('anly')}>2) Levels</button>
           <button className="btn !py-0.5" onClick={() => jump('smc')}>3) SMC</button>
           <button className="btn !py-0.5" onClick={() => jump('ind')}>4) Indicators</button>
         </div>
       </div>
 
       <div ref={scrollRef} className="scroll-thin min-h-0 flex-1 overflow-y-auto">
-        <Group id="sec-orig" title="1) Original patterns" count={`${listed.filter(p.isVisible).length} shown · ${listed.length} listed · ${totalOrig} found`}
+        <Group id="sec-orig" title="1) Classic patterns" count={`${listed.filter(p.isVisible).length} shown · ${listed.length} listed · ${totalOrig} found`}
                right={<EngineBadge e="original" />} open={openSec.orig} onToggle={() => setOpenSec(s => ({ ...s, orig: !s.orig }))}>
           <div className="space-y-2 p-3">
-            <div className="flex flex-wrap items-center gap-1" role="radiogroup" aria-label="Which original patterns are drawn">
+            <div className="flex flex-wrap items-center gap-1" role="radiogroup" aria-label="Which classic patterns are drawn">
               {(['top5', 'high', 'all', 'none'] as Mode[]).map(m => (
                 <button key={m} role="radio" aria-checked={prefs.mode === m} className="btn !py-1"
                         onClick={() => update({ mode: m, overrides: {}, preset: null }, true)}>
@@ -257,7 +257,7 @@ export default function PatternDrawer(p: Props) {
             </div>
           </div>
           <ul>
-            {listed.length === 0 && <li className="px-3 pb-3 text-muted">No original patterns match.</li>}
+            {listed.length === 0 && <li className="px-3 pb-3 text-muted">No classic patterns match.</li>}
             {(showAll || needle ? listed : listed.slice(0, LIST_CAP)).map((x, i) => {
               const vis = p.isVisible(x)
               return (
@@ -285,8 +285,8 @@ export default function PatternDrawer(p: Props) {
           </ul>
         </Group>
 
-        <Group id="sec-anly" title="2) Analyst levels" right={<EngineBadge e="analyst" />} open={openSec.anly} onToggle={() => setOpenSec(s => ({ ...s, anly: !s.anly }))}>
-          {groups.length === 0 && <p className="p-3 text-muted">{needle ? 'Nothing matches.' : 'No analyst levels for this stock yet (re-analyse).'}</p>}
+        <Group id="sec-anly" title="2) Levels (Fibonacci, zones, trendlines)" right={<EngineBadge e="analyst" />} open={openSec.anly} onToggle={() => setOpenSec(s => ({ ...s, anly: !s.anly }))}>
+          {groups.length === 0 && <p className="p-3 text-muted">{needle ? 'Nothing matches.' : 'No levels-engine drawings for this stock yet (re-analyse).'}</p>}
           <LevelGroups groups={groups} prefs={prefs} setLayer={setLayer} setLevel={setLevel} selected={p.selected} onSelect={p.onSelect} />
         </Group>
 
@@ -304,7 +304,7 @@ export default function PatternDrawer(p: Props) {
                 <div className="ml-auto flex gap-1" role="radiogroup" aria-label="Which engine's plan is drawn">
                   {(['original', 'analyst', 'smc', 'both'] as PlanEngine[]).map(e => (
                     <button key={e} role="radio" aria-checked={prefs.planEngine === e} className="btn !py-0.5" onClick={() => update({ planEngine: e, preset: null })}>
-                      {e === 'original' ? 'Original' : e === 'analyst' ? 'Analyst' : e === 'smc' ? 'SMC' : 'All'}
+                      {e === 'original' ? 'Classic' : e === 'analyst' ? 'Levels' : e === 'smc' ? 'SMC' : 'All'}
                     </button>
                   ))}
                 </div>
@@ -323,7 +323,7 @@ export default function PatternDrawer(p: Props) {
       </div>
 
       <div className="flex items-center gap-2 border-t border-line bg-panel px-3 py-1.5 text-[11px]">
-        <span className="flex-1 text-muted">Plans: Original white solid (O:) · Analyst pink dashed (A:) · SMC lavender long dashes (S:)</span>
+        <span className="flex-1 text-muted">Plans: Classic white solid (C:) · Levels pink dashed (L:) · SMC lavender long dashes (S:)</span>
         <button className="btn !py-0.5" onClick={() => p.applyPreset('both')}>Reset</button>
       </div>
     </aside>

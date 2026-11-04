@@ -30,8 +30,8 @@
   --support: #2a71d6;
   --resistance: #db640e;
   --fib: #19aa8e;
-  --plan: #e6e6e6;          /* Original-engine plan */
-  --plan-anly: #db327b;     /* Analyst-engine plan */
+  --plan: #e6e6e6;          /* Classic-engine plan */
+  --plan-anly: #db327b;     /* Levels-engine plan */
   --plan-smc: #c08cff;      /* SMC-engine plan (passes CVD + normal-vision checks against every chart hue) */
   --ema21: #ffa028;
   --ema50: #cfcfcf;

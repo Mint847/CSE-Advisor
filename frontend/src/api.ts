@@ -20,6 +20,9 @@ export interface Pattern {
   engine?: Engine
 }
 export type Engine = 'original' | 'analyst' | 'smc'
+/** Which engines' drawings are shown on the chart. */
+export type EngineMask = Record<Engine, boolean>
+export const ALL_ENGINES: EngineMask = { original: true, analyst: true, smc: true }
 export interface SmcEvent { kind: 'bos' | 'choch'; dir: 'up' | 'down'; level: number; date: string }
 export interface SmcRange { dir: 'up' | 'down'; low: number; high: number; eq: number; pos: number; ote_low: number; ote_high: number; zone: 'discount' | 'premium'; in_ote: boolean }
 export interface SmcContext {

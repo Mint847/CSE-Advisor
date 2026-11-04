@@ -5,7 +5,7 @@ import { AgreeBadge, ENGINE_TEXT, EngineBadge, ScoreBar, Section, VerdictBadge }
 
 export type RecView = 'original' | 'analyst' | 'smc' | 'compare'
 type Eng = 'original' | 'analyst' | 'smc'
-const ENGINE_NAME: Record<Eng, string> = { original: 'Original engine', analyst: 'Analyst engine', smc: 'SMC engine' }
+const ENGINE_NAME: Record<Eng, string> = { original: 'Classic engine', analyst: 'Levels engine', smc: 'SMC engine' }
 
 function SmcBox({ c, close }: { c: SmcContext; close: number }) {
   const ev = (e: SmcContext['last']) => e ? `${e.kind.toUpperCase()} ${e.dir === 'up' ? '↑' : '↓'} ${fmt(e.level)} · ${e.date}` : 'no break yet'
@@ -269,12 +269,12 @@ function CompareView({ o, n, s, a }: { o: EngineRec; n: EngineRec | null; s: Eng
   ]
   return (
     <section className="card">
-      <div className="panel-title"><span className="flex-1">CMP · Original vs Analyst vs SMC</span><AgreeBadge a={ag} /></div>
+      <div className="panel-title"><span className="flex-1">CMP · Classic vs Levels vs SMC</span><AgreeBadge a={ag} /></div>
       {ag && <p className="border-b border-line px-3 py-1.5 text-[12px]">{ag.text} {ag.state !== 'agree' ? 'When they disagree, read each case below before acting; no engine has shown a reliable edge in the walk-forward tests.' : ''}</p>}
       <div className="scroll-thin overflow-x-auto">
         <table className="bb-table min-w-[960px] table-fixed">
           <colgroup><col className="w-32" /><col /><col /><col /></colgroup>
-          <thead><tr><th></th><th><EngineBadge e="original" /> Original</th><th><EngineBadge e="analyst" /> Analyst</th><th><EngineBadge e="smc" /> SMC</th></tr></thead>
+          <thead><tr><th></th><th><EngineBadge e="original" /> Classic</th><th><EngineBadge e="analyst" /> Levels</th><th><EngineBadge e="smc" /> SMC</th></tr></thead>
           <tbody>
             {rows.map(([label, f]) => <tr key={label}><td className="align-top text-amber">{label}</td>{cell(o, f)}{cell(n, f)}{cell(s, f)}</tr>)}
             {/* shared by all three: evidence beside the engines, not part of their scores */}
@@ -304,7 +304,7 @@ export default function RecommendationTab({ a, view, onView, onPattern }: Props)
   return (
     <div>
       <div className="mb-2 flex flex-wrap gap-1" role="radiogroup" aria-label="Engine view">
-        {([['compare', 'CMP · Compare'], ['original', 'ORIG · Original'], ['analyst', 'ANLY · Analyst'], ['smc', 'SMC · Smart money']] as [RecView, string][]).map(([v, label]) => (
+        {([['compare', 'CMP · Compare'], ['original', 'CLS · Classic'], ['analyst', 'LVL · Levels'], ['smc', 'SMC · Smart money']] as [RecView, string][]).map(([v, label]) => (
           <button key={v} role="radio" aria-checked={view === v} className="btn" onClick={() => onView(v)}
                   disabled={(v === 'analyst' && !anly) || (v === 'smc' && !smc)}>{label}</button>
         ))}

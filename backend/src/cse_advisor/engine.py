@@ -138,9 +138,9 @@ def analyze_frame(s: Session | None, sec: Any, adj: pd.DataFrame, actions: list[
     intraday = tf != "1D"
     if intraday:
         save, intraday_vap, position = False, None, None
-    # Original engine: works on the adjusted bars exactly as built originally (real wicks).
+    # Classic engine: works on the adjusted bars exactly as built originally (real wicks).
     df_u = indicators.add_all(adj)
-    # Analyst engine: freak single-bar wicks (e.g. an XR-day spike that hit the price breakers) are
+    # Levels engine: freak single-bar wicks (e.g. an XR-day spike that hit the price breakers) are
     # capped so they don't become swing points, Fibonacci anchors or "the peak".
     df = df_u.copy()
     df["high"], df["low"] = robust_extremes(df)

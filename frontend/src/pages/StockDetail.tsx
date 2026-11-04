@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link, useParams, useSearchParams } from 'react-router-dom'
 import { TF_LABEL, TIMEFRAMES, api, engines, fmt, isIntraday, ticker, type Analysis, type Candles, type Coverage, type EngineRec, type LiveOverlay, type LiveStatus, type Timeframe } from '../api'
-import PriceChart, { levelPatterns, smcPatterns } from '../chart/PriceChart'
+import PriceChart, { engineOf, levelPatterns, smcPatterns } from '../chart/PriceChart'
 import CorporatePanel from '../components/CorporatePanel'
 import FundamentalsTab from '../components/FundamentalsTab'
 import LiquidityTab from '../components/LiquidityTab'
@@ -22,7 +22,7 @@ const TABS = [
 ] as const
 type TabId = (typeof TABS)[number]['id']
 
-const PANEL_TITLE = { original: 'ORIGINAL · patterns + 5-factor score', analyst: 'ANALYST · Fibonacci, zones, level entries',
+const PANEL_TITLE = { original: 'CLASSIC · patterns + 5-factor score', analyst: 'LEVELS · Fibonacci, zones, level entries',
   smc: 'SMC · order blocks, premium/discount, liquidity' }
 
 function CoverageLine({ c }: { c: Coverage }) {
@@ -149,17 +149,19 @@ export default function StockDetail() {
 
   const f = useMemo(() => filterPatterns(a?.patterns ?? [], prefs, enabled), [a, prefs, enabled])
   // a selected pattern is always drawn, even if filtered out of the visible set
+  const mask = prefs.engines
   const drawn = useMemo(() => {
-    if (!selected || f.visible.some(p => p.id === selected)) return f.visible
+    const shown = f.visible.filter(p => mask[engineOf(p)])
+    if (!selected || shown.some(p => p.id === selected)) return shown
     const p = a?.patterns.find(x => x.id === selected)
-    return p ? [...f.visible, p] : f.visible
-  }, [f.visible, selected, a])
-  const levelOn = useMemo(() => levelPatterns(a?.patterns ?? [], prefs.layers, prefs.levelOverrides), [a, prefs.layers, prefs.levelOverrides])
+    return p ? [...shown, p] : shown
+  }, [f.visible, selected, a, mask])
+  const levelOn = useMemo(() => mask.analyst ? levelPatterns(a?.patterns ?? [], prefs.layers, prefs.levelOverrides) : [], [a, prefs.layers, prefs.levelOverrides, mask])
   const groups = useMemo(() => a ? analystGroups(a, prefs, f.analystPatterns, f.isAnalystVisible) : [], [a, prefs, f.analystPatterns, f.isAnalystVisible])
   const sGroups = useMemo(() => a ? smcGroups(a, prefs) : [], [a, prefs])
-  const smcOn = useMemo(() => smcPatterns(a?.patterns ?? [], prefs.layers, prefs.levelOverrides), [a, prefs.layers, prefs.levelOverrides])
-  const drawnCount = f.visible.length + levelOn.length + smcOn.length
-    + groups.filter(g => !['fib', 'tl', 'swing', 'apat'].includes(g.layer)).flatMap(g => g.items).filter(i => i.on).length
+  const smcOn = useMemo(() => mask.smc ? smcPatterns(a?.patterns ?? [], prefs.layers, prefs.levelOverrides) : [], [a, prefs.layers, prefs.levelOverrides, mask])
+  const drawnCount = f.visible.filter(p => mask[engineOf(p)]).length + levelOn.length + smcOn.length
+    + (mask.analyst ? groups.filter(g => !['fib', 'tl', 'swing', 'apat'].includes(g.layer)).flatMap(g => g.items).filter(i => i.on).length : 0)
 
   const selectPattern = (id: string | null) => {
     setSelected(id)
@@ -186,11 +188,11 @@ export default function StockDetail() {
 
   // active-drawings strip: everything currently drawn, removable with one click
   const allChips: { key: string; label: string; cls: string; off: () => void; id?: string }[] = [
-    ...f.listed.filter(f.isVisible).map(p => ({ key: p.id, id: p.id, label: `${p.direction === 'bullish' ? '▲' : p.direction === 'bearish' ? '▼' : '◆'} ${p.name}${liveCheck?.patterns?.[p.id]?.state === 'invalidated' ? ' ⚠ live' : liveCheck?.patterns?.[p.id]?.state === 'target' ? ' ✓ live' : ''}`,
+    ...(mask.original ? f.listed.filter(f.isVisible) : []).map(p => ({ key: p.id, id: p.id, label: `${p.direction === 'bullish' ? '▲' : p.direction === 'bearish' ? '▼' : '◆'} ${p.name}${liveCheck?.patterns?.[p.id]?.state === 'invalidated' ? ' ⚠ live' : liveCheck?.patterns?.[p.id]?.state === 'target' ? ' ✓ live' : ''}`,
       cls: p.direction === 'bullish' ? 'text-bull' : p.direction === 'bearish' ? 'text-bear' : 'text-neutral', off: () => update({ overrides: { ...prefs.overrides, [p.id]: false }, preset: null }) })),
-    ...groups.flatMap(g => g.items.filter(i => i.on).map(i => ({ key: i.key, id: i.patternId, label: i.label, cls: 'text-plan-anly',
+    ...(mask.analyst ? groups : []).flatMap(g => g.items.filter(i => i.on).map(i => ({ key: i.key, id: i.patternId, label: i.label, cls: 'text-plan-anly',
       off: () => update({ levelOverrides: { ...prefs.levelOverrides, [i.key]: false }, preset: null }) }))),
-    ...sGroups.flatMap(g => g.items.filter(i => i.on).map(i => ({ key: i.key, id: i.patternId, label: i.label, cls: 'text-plan-smc',
+    ...(mask.smc ? sGroups : []).flatMap(g => g.items.filter(i => i.on).map(i => ({ key: i.key, id: i.patternId, label: i.label, cls: 'text-plan-smc',
       off: () => update({ levelOverrides: { ...prefs.levelOverrides, [i.key]: false }, preset: null }) }))),
   ]
   const chips = [...new Map(allChips.map(c => [c.key, c])).values()]
@@ -237,9 +239,18 @@ export default function StockDetail() {
           <button className="btn !border-l-0 !px-2" aria-pressed={prefs.layers.zigzag} title="Zig-zag swings: a line through the swing highs and lows (a move of 2 × ATR turns it)"
                   onClick={() => update({ layers: { ...prefs.layers, zigzag: !prefs.layers.zigzag }, preset: null })}>Zig-zag {prefs.layers.zigzag ? 'ON' : 'OFF'}</button>
         </div>
+        <div className="flex" role="group" aria-label="Engines shown on the chart"
+             title="Choose whose drawings are on the chart. Click an engine to switch it on or off; double-click to show only that engine.">
+          <span className="btn btn-menu !pr-1.5"><span className="key">5)</span>Show</span>
+          {([['original', 'CLS'], ['analyst', 'LVL'], ['smc', 'SMC']] as const).map(([e, label]) => (
+            <button key={e} className="btn !border-l-0 !px-2" aria-pressed={mask[e]}
+                    onClick={() => update({ engines: { ...mask, [e]: !mask[e] }, preset: null })}
+                    onDoubleClick={() => update({ engines: { original: e === 'original', analyst: e === 'analyst', smc: e === 'smc' }, preset: null })}>{label}</button>
+          ))}
+        </div>
         {(candles?.events?.length ?? 0) > 0 && (
           <button className="btn btn-menu" aria-pressed={raw} onClick={() => setRaw(r => !r)} title="Prices exactly as traded, without the rights/split adjustment (drawings hidden)">
-            <span className="key">5)</span>Raw prices {raw ? 'ON' : 'OFF'}
+            <span className="key">6)</span>Raw prices {raw ? 'ON' : 'OFF'}
           </button>
         )}
         <span className="ml-auto hidden text-[11px] text-muted lg:inline">P = patterns · type <b className="text-yellow">CMP &lt;GO&gt;</b>, <b className="text-yellow">SMC &lt;GO&gt;</b>, <b className="text-yellow">DES &lt;GO&gt;</b></span>
@@ -252,7 +263,7 @@ export default function StockDetail() {
           {cov ? <CoverageLine c={cov} /> : <span>loading bars…</span>}
           <span className="lg:hidden">· intraday verdicts; the watchlist &amp; alerts use daily</span>
           <span className="hidden lg:inline">· intraday verdicts, run on demand; the watchlist, alerts and Telegram use daily
-            {ia?.daily?.verdicts && <> (daily: ORIG <b className="text-fg">{ia.daily.verdicts.original ?? '–'}</b> · ANLY <b className="text-fg">{ia.daily.verdicts.analyst ?? '–'}</b> · SMC <b className="text-fg">{ia.daily.verdicts.smc ?? '–'}</b>)</>}</span>
+            {ia?.daily?.verdicts && <> (daily: CLS <b className="text-fg">{ia.daily.verdicts.original ?? '–'}</b> · LVL <b className="text-fg">{ia.daily.verdicts.analyst ?? '–'}</b> · SMC <b className="text-fg">{ia.daily.verdicts.smc ?? '–'}</b>)</>}</span>
           <button className="btn ml-auto !py-0" disabled={backfilling} onClick={backfill} title="Re-load intraday history from TradingView (unofficial; may fail)">
             {backfilling ? 'Backfilling…' : 'Backfill history'}
           </button>
@@ -299,7 +310,7 @@ export default function StockDetail() {
         <div className="h-[64vh] min-h-[420px]">
           {candles ? <PriceChart candles={candles} analysis={a} visible={drawn} layers={prefs.layers} highlightId={selected}
                                  onSelect={selectPattern} quote={tf === '1D' || intra ? quote : null} focus={focus}
-                                 planEngine={prefs.planEngine} levelOverrides={prefs.levelOverrides} chartStyle={prefs.chartStyle} /> : <Spinner label="Loading chart…" />}
+                                 planEngine={prefs.planEngine} levelOverrides={prefs.levelOverrides} chartStyle={prefs.chartStyle} engineMask={mask} /> : <Spinner label="Loading chart…" />}
         </div>
       </section>
 

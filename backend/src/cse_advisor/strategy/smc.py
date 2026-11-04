@@ -1,4 +1,4 @@
-"""The SMC engine: smart-money concepts, independent of the Original and Analyst engines.
+"""The SMC engine: smart-money concepts, independent of the Classic and Levels engines.
 
 Model (long only, like retail trading on the CSE): the weekly chart sets the bias; on the daily
 chart wait for a bullish break of structure (BOS / CHoCH), then buy the pullback into discount

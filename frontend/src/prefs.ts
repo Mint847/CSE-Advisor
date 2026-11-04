@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
-import { api, type CatalogEntry, type ChartStyle, type Pattern } from './api'
+import { ALL_ENGINES, api, type CatalogEntry, type ChartStyle, type EngineMask, type Pattern } from './api'
 import { DEFAULT_LAYERS, type Layers } from './chart/PriceChart'
 
 export type Mode = 'top5' | 'high' | 'all' | 'none'
 export type PlanEngine = 'original' | 'analyst' | 'smc' | 'both'   // 'both' = every engine (kept for saved prefs)
 export interface StockPrefs {
-  mode: Mode                               // which Original-engine patterns are drawn by default
+  mode: Mode                               // which Classic-engine patterns are drawn by default
   categories: string[]
   directions: string[]
   statuses: string[]
@@ -16,6 +16,7 @@ export interface StockPrefs {
   planEngine: PlanEngine
   preset: string | null
   chartStyle: ChartStyle                   // candlesticks or a close-price line
+  engines: EngineMask                      // whose drawings are shown: Classic, Levels, SMC
 }
 export const CATEGORIES = ['chart_pattern', 'liquidity', 'divergence', 'candlestick']
 export const CATEGORY_LABEL: Record<string, string> = { chart_pattern: 'Chart', liquidity: 'Liquidity', divergence: 'Divergence', candlestick: 'Candles' }
@@ -23,7 +24,7 @@ export const CATEGORY_LABEL: Record<string, string> = { chart_pattern: 'Chart', 
 export const DEFAULT_PREFS: StockPrefs = {
   mode: 'top5', categories: CATEGORIES, directions: ['bullish', 'bearish', 'neutral'],
   statuses: ['forming', 'confirmed', 'failed'], maxAge: 90, overrides: {}, levelOverrides: {}, layers: DEFAULT_LAYERS,
-  planEngine: 'both', preset: 'both', chartStyle: 'candles',
+  planEngine: 'both', preset: 'both', chartStyle: 'candles', engines: ALL_ENGINES,
 }
 
 const OFF = Object.fromEntries(Object.keys(DEFAULT_LAYERS).map(k => [k, false])) as unknown as Layers
@@ -32,19 +33,19 @@ const ON = Object.fromEntries(Object.keys(DEFAULT_LAYERS).map(k => [k, true])) a
 /** One-click display presets. Each returns a patch; per-item overrides are cleared. */
 export const PRESETS: { id: string; label: string; desc: string; patch: () => Partial<StockPrefs> }[] = [
   { id: 'clean', label: 'Clean', desc: 'Trade plans and buy zones only',
-    patch: () => ({ mode: 'none', planEngine: 'both', layers: { ...OFF, plan: true, zones: true, volume: true } }) },
-  { id: 'original', label: 'Original', desc: 'Top 5 original patterns, S/R, EMAs, Original plan',
-    patch: () => ({ mode: 'top5', planEngine: 'original', layers: { ...OFF, sr: true, vp: true, ema: true, plan: true, volume: true, rsi: true } }) },
-  { id: 'analyst', label: 'Analyst', desc: 'Fibonacci, buy/sell zones, trendlines, XR, swings, Analyst entries',
-    patch: () => ({ mode: 'none', planEngine: 'analyst', layers: { ...OFF, fib: true, zones: true, sellz: true, tl: true, events: true, swing: true, apat: true, avp: true, plan: true, ema: true, volume: true, rsi: true } }) },
+    patch: () => ({ mode: 'none', planEngine: 'both', engines: ALL_ENGINES, layers: { ...OFF, plan: true, zones: true, volume: true } }) },
+  { id: 'original', label: 'Classic', desc: 'Top 5 classic patterns, S/R, EMAs, Classic plan',
+    patch: () => ({ mode: 'top5', planEngine: 'original', engines: { original: true, analyst: false, smc: false }, layers: { ...OFF, sr: true, vp: true, ema: true, plan: true, volume: true, rsi: true } }) },
+  { id: 'analyst', label: 'Levels', desc: 'Fibonacci, buy/sell zones, trendlines, XR, swings, Levels entries',
+    patch: () => ({ mode: 'none', planEngine: 'analyst', engines: { original: false, analyst: true, smc: false }, layers: { ...OFF, fib: true, zones: true, sellz: true, tl: true, events: true, swing: true, apat: true, avp: true, plan: true, ema: true, volume: true, rsi: true } }) },
   { id: 'smc', label: 'SMC', desc: 'Order blocks, fair value gaps, premium/discount, BOS/CHoCH, liquidity, SMC entries',
-    patch: () => ({ mode: 'none', planEngine: 'smc', layers: { ...OFF, ob: true, fvg: true, pd: true, bos: true, sliq: true, plan: true, events: true, volume: true } }) },
+    patch: () => ({ mode: 'none', planEngine: 'smc', engines: { original: false, analyst: false, smc: true }, layers: { ...OFF, ob: true, fvg: true, pd: true, bos: true, sliq: true, plan: true, events: true, volume: true } }) },
   { id: 'both', label: 'All 3', desc: 'Default: all three engines side by side',
-    patch: () => ({ mode: 'top5', planEngine: 'both', layers: DEFAULT_LAYERS }) },
+    patch: () => ({ mode: 'top5', planEngine: 'both', engines: ALL_ENGINES, layers: DEFAULT_LAYERS }) },
   { id: 'everything', label: 'Everything', desc: 'Every pattern and every layer',
-    patch: () => ({ mode: 'all', planEngine: 'both', maxAge: null, layers: ON }) },
+    patch: () => ({ mode: 'all', planEngine: 'both', engines: ALL_ENGINES, maxAge: null, layers: ON }) },
   { id: 'none', label: 'None', desc: 'Bare candles and volume',
-    patch: () => ({ mode: 'none', layers: { ...OFF, volume: true } }) },
+    patch: () => ({ mode: 'none', engines: ALL_ENGINES, layers: { ...OFF, volume: true } }) },
 ]
 
 /** Per-stock display preferences, persisted in the backend (falls back to the global default). */
@@ -83,6 +84,7 @@ export function useStockPrefs(symbol: string) {
 function merge(def: StockPrefs | null, own: StockPrefs | null): StockPrefs {
   return { ...DEFAULT_PREFS, ...(def ?? {}), ...(own ?? {}),
     levelOverrides: { ...(own?.levelOverrides ?? {}) },
+    engines: { ...ALL_ENGINES, ...(def?.engines ?? {}), ...(own?.engines ?? {}) },
     layers: { ...DEFAULT_LAYERS, ...(def?.layers ?? {}), ...(own?.layers ?? {}) } }
 }
 

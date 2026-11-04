@@ -69,7 +69,7 @@ export default function FundamentalsTab({ symbol, onSaved }: { symbol: string; o
         {!f.has_data ? (
           <div className="text-sm text-muted">
             <p>{f.detail}</p>
-            <p className="mt-2">Figures are read automatically from the quarterly statement PDFs each evening (and once when a stock is added). Statements that are scanned images can't be read: open them below and use <b>Add figures</b>. Fundamentals carry 15% of the Original engine's score; until figures exist, that weight is spread across the other factors.</p>
+            <p className="mt-2">Figures are read automatically from the quarterly statement PDFs each evening (and once when a stock is added). Statements that are scanned images can't be read: open them below and use <b>Add figures</b>. Fundamentals carry 15% of the Classic engine's score; until figures exist, that weight is spread across the other factors.</p>
           </div>
         ) : (
           <>

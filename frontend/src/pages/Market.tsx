@@ -150,7 +150,7 @@ export default function Market() {
 
       <Section title="What drives the market regime score">
         <ul className="list-disc space-y-1 pl-5 text-sm">{m.regime.factors.map(f => <li key={f}>{f}</li>)}</ul>
-        <p className="mt-2 text-xs text-muted">Turnover and breadth build up from the day you start running the app (CSE history gives ASPI closes only). On 5M–4H charts the Original engine uses the ASPI on the same timeframe instead. CBSL policy rates, T-bill yields and LKR are planned for the macro module.</p>
+        <p className="mt-2 text-xs text-muted">Turnover and breadth build up from the day you start running the app (CSE history gives ASPI closes only). On 5M–4H charts the Classic engine uses the ASPI on the same timeframe instead. CBSL policy rates, T-bill yields and LKR are planned for the macro module.</p>
       </Section>
     </div>
   )

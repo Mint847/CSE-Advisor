@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from .strategy.recommend import ENGINE_TAG
+
 FRESH_BARS = 15        # patterns older than this are history, not signals
 
 
@@ -83,7 +85,7 @@ def live_overlay(analysis: dict[str, Any], quote: dict[str, Any] | None) -> dict
             st = plan_status(plan, last, high, low)
             out["plans"][eng] = st
             if st["state"] in ("stop_level_hit", "t1_reached", "above_max_chase", "trigger_crossed", "in_zone"):
-                out["summary"].append(f"[{eng[:4].upper()}] {st['text']}")
+                out["summary"].append(f"[{ENGINE_TAG[eng]}] {st['text']}")
     prev = float(rec.get("close") or 0)
     if prev:
         out["change_pct"] = (last / prev - 1) * 100

@@ -8,11 +8,11 @@ const ORDER: Record<string, number> = { BUY: 0, SELL: 1, TRIM: 2, HOLD: 3, WATCH
 type Key = 'ticker' | 'last' | 'chg' | 'orig' | 'anly' | 'smc' | 'agree' | 'trend' | 'liq' | 'added'
 const AGREE_ORDER: Record<string, number> = { agree: 0, mixed: 1, differ: 2 }
 
-/** Nearest planned level: the Analyst Buy zone 1, the Original limit or the SMC entry zone, whichever is closest. */
+/** Nearest planned level: the Levels Buy zone 1, the Classic limit or the SMC entry zone, whichever is closest. */
 function nextLevel(it: WatchItem, price: number | null) {
   const c: { tag: string; text: string; ref: number }[] = []
-  if (it.zone1) c.push({ tag: 'ANLY Z1', text: `${fmt(it.zone1.low)}–${fmt(it.zone1.high)}`, ref: it.zone1.high })
-  if (it.plan && it.plan.actionable) c.push({ tag: 'ORIG LMT', text: fmt(it.plan.ideal), ref: it.plan.ideal })
+  if (it.zone1) c.push({ tag: 'LVL Z1', text: `${fmt(it.zone1.low)}–${fmt(it.zone1.high)}`, ref: it.zone1.high })
+  if (it.plan && it.plan.actionable) c.push({ tag: 'CLS LMT', text: fmt(it.plan.ideal), ref: it.plan.ideal })
   if (it.plan_smc) c.push({ tag: `SMC ${it.plan_smc.label === 'FVG entry' ? 'FVG' : it.plan_smc.label === 'Break & retest' ? 'RTST' : 'OB'}`,
     text: `${fmt(it.plan_smc.zone.low)}–${fmt(it.plan_smc.zone.high)}`, ref: it.plan_smc.zone.high })
   if (!c.length || price == null) return c[0] ?? null
@@ -106,8 +106,8 @@ export default function Watchlist() {
                   {th('last', 'Last', 'text-right')}
                   {th('chg', 'Chg%', 'text-right')}
                   <th className="hidden md:table-cell">60D</th>
-                  {th('orig', 'Orig')}
-                  {th('anly', 'Anly')}
+                  {th('orig', 'Cls')}
+                  {th('anly', 'Lvl')}
                   {th('smc', 'SMC')}
                   {th('agree', 'Agr')}
                   {th('trend', 'Trend', 'hidden md:table-cell')}
@@ -143,7 +143,7 @@ export default function Watchlist() {
           </div>
         )}
         <div className="border-t border-line px-2 py-1 text-[11px] text-muted">
-          ORIG = original engine (patterns + 5-factor score) · ANLY = analyst engine (Fibonacci, buy zones, level entries) · SMC = smart-money engine (order blocks, premium/discount, liquidity) · AGR ● all agree ◐ mixed ○ differ · ↑↓ + ENTER to open
+          CLS = classic engine (patterns + 5-factor score) · LVL = levels engine (Fibonacci, buy zones, level entries) · SMC = smart-money engine (order blocks, premium/discount, liquidity) · AGR ● all agree ◐ mixed ○ differ · ↑↓ + ENTER to open
         </div>
       </section>
     </div>

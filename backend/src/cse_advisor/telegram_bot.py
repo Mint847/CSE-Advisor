@@ -94,8 +94,8 @@ def report_text(symbol: str, compact: bool = True) -> str:
     url = env("APP_URL", "http://localhost:8000")
     close = ro.get("close") or (a.recommendation or {}).get("close")
     lines = [f"<b>{html.escape(symbol.split('.')[0])}</b> {_f(close)} · <i>{html.escape(sec.name if sec else symbol)}</i>",
-             f"{VERDICT_ICON.get(a.verdict, '')} ORIG <b>{a.verdict}</b> {a.score:.0f}/100"
-             + (f"   {VERDICT_ICON.get(a.verdict_analyst, '')} ANLY <b>{a.verdict_analyst}</b> {a.score_analyst or 0:.0f}/100" if ra else "")
+             f"{VERDICT_ICON.get(a.verdict, '')} CLS <b>{a.verdict}</b> {a.score:.0f}/100"
+             + (f"   {VERDICT_ICON.get(a.verdict_analyst, '')} LVL <b>{a.verdict_analyst}</b> {a.score_analyst or 0:.0f}/100" if ra else "")
              + (f"   {VERDICT_ICON.get(a.verdict_smc, '')} SMC <b>{a.verdict_smc}</b> {a.score_smc or 0:.0f}/100" if rs else "")
              + (f"   {AGREE_ICON.get(agree.get('state'), '')}" if agree else ""),
              f"Trend {a.trend['state'].replace('_', ' ')} · Liquidity {a.liquidity['grade']} ({a.liquidity['flow']['label']}, {a.liquidity['regime'].replace('_', ' ')})"]
@@ -105,7 +105,7 @@ def report_text(symbol: str, compact: bool = True) -> str:
         for r in cat.get("risk_lines", [])[:2]:
             lines.append("⏰ " + html.escape(r, quote=False))
     n = 2 if compact else 6
-    for tag, verdict, eng_rec in (("ORIG", a.verdict, ro), ("ANLY", a.verdict_analyst, ra), ("SMC", a.verdict_smc, rs)):
+    for tag, verdict, eng_rec in (("CLS", a.verdict, ro), ("LVL", a.verdict_analyst, ra), ("SMC", a.verdict_smc, rs)):
         if not eng_rec:
             continue
         ex = eng_rec.get("explanation") or {}
@@ -123,13 +123,13 @@ def report_text(symbol: str, compact: bool = True) -> str:
             lines.append(f"[SMC] weekly {c.get('htf_bias', '–')} · daily "
                          + (f"{last['kind'].upper()} {'↑' if last['dir'] == 'up' else '↓'} {_f(last['level'])}" if last else "no break")
                          + (f" · {rg['zone']} ({rg['pos'] * 100:.0f}% of leg, EQ {_f(rg['eq'])})" if rg else ""))
-        if tag in ("ANLY", "SMC") and not compact:
+        if tag in ("LVL", "SMC") and not compact:
             for e in (ex.get("entries") or [])[:4]:
                 lines.append(f"  • {html.escape(e['label'])}: {html.escape(e['zone'])}"
                              + (f" after close &gt; {_f(e['trigger'])}" if e.get("trigger") else "")
                              + f" · stop {_f(e['stop'])}" + (f" · TP {' / '.join(_f(t) for t in e['targets'][:2])}" if e["targets"] else "")
                              + f" · R:R {e['rr']:.2f}")
-        if tag == "ANLY":
+        if tag == "LVL":
             for note in (eng_rec.get("corporate") or {}).get("notes", [])[:2]:
                 lines.append("📌 " + html.escape(note, quote=False))
         rv = eng_rec.get("position_review")
@@ -234,8 +234,8 @@ def handle_command(text: str, chat: str) -> None:
             with SessionLocal() as s:
                 syms = ingest.watchlist_symbols(s)
                 rows = [s.scalar(select(Analysis).where(Analysis.symbol == x).order_by(Analysis.date.desc())) for x in syms]
-            send_text("\n".join(f"<b>{x.split('.')[0]}</b> {_f(split_engines(a.recommendation)[0].get('close'))} · ORIG {VERDICT_ICON.get(a.verdict, '')}{a.verdict} {a.score:.0f}"
-                                f" · ANLY {VERDICT_ICON.get(a.verdict_analyst or '', '')}{a.verdict_analyst or '–'} {a.score_analyst or 0:.0f}"
+            send_text("\n".join(f"<b>{x.split('.')[0]}</b> {_f(split_engines(a.recommendation)[0].get('close'))} · CLS {VERDICT_ICON.get(a.verdict, '')}{a.verdict} {a.score:.0f}"
+                                f" · LVL {VERDICT_ICON.get(a.verdict_analyst or '', '')}{a.verdict_analyst or '–'} {a.score_analyst or 0:.0f}"
                                 f" · SMC {VERDICT_ICON.get(a.verdict_smc or '', '')}{a.verdict_smc or '–'} {a.score_smc or 0:.0f}"
                                 if a else f"• {x}: not analysed yet" for x, a in zip(syms, rows)) or "Watchlist is empty.", chat)
         elif cmd == "/report" and arg:

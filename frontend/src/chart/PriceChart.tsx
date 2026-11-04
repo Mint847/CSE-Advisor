@@ -4,8 +4,8 @@ import {
   type IChartApi, type IPriceLine, type ISeriesApi, type ISeriesMarkersPluginApi, type Logical, type SeriesMarker, type Time,
   type UTCTimestamp,
 } from 'lightweight-charts'
-import type { Analysis, Candles, ChartStyle, Pattern, Quote } from '../api'
-import { engines, fmt } from '../api'
+import type { Analysis, Candles, ChartStyle, Engine, EngineMask, Pattern, Quote } from '../api'
+import { ALL_ENGINES, engines, fmt } from '../api'
 import { CHART_FONT, PatternOverlay, SESSION_CLOSE, SESSION_OPEN, TimeMapper, readPalette, type DrawnPlan, type Palette } from './overlay'
 
 /** Chart time for a bar label. Daily 'YYYY-MM-DD' stays a business-day string; intraday 'YYYY-MM-DD HH:MM'
@@ -53,6 +53,11 @@ export function sessionWindows(times: string[], tf: string): { t1: string; t2: s
   return out
 }
 
+/** The engine a drawing belongs to: SMC drawings, Analyst level drawings and hidden divergences / long flags, else Original. */
+export function engineOf(p: Pattern): Engine {
+  return p.engine === 'smc' || p.category === 'smc' ? 'smc' : p.engine === 'analyst' || p.category === 'level' ? 'analyst' : 'original'
+}
+
 /** Which SMC layer switch controls an SMC drawing. */
 export function smcLayer(p: Pattern): keyof Layers {
   return p.type.endsWith('order_block') ? 'ob' : p.type.endsWith('fvg') ? 'fvg' : p.type === 'premium_discount' ? 'pd'
@@ -70,7 +75,7 @@ export function smcPatterns(all: Pattern[], layers: Layers, overrides: Record<st
 export function levelLayer(p: Pattern): keyof Layers | null {
   return p.type === 'fibonacci' ? 'fib' : p.type.startsWith('trendline') ? 'tl' : p.type === 'swing_structure' ? 'swing' : null
 }
-/** Level-type drawings (Analyst engine): on by their layer, unless switched individually. */
+/** Level-type drawings (Levels engine): on by their layer, unless switched individually. */
 export function levelPatterns(all: Pattern[], layers: Layers, overrides: Record<string, boolean> = {}): Pattern[] {
   return all.filter(p => {
     if (p.category !== 'level') return false
@@ -118,6 +123,8 @@ interface Props {
   planEngine?: 'original' | 'analyst' | 'smc' | 'both'
   levelOverrides?: Record<string, boolean>
   chartStyle?: ChartStyle
+  /** which engines' drawings, zones and plans are shown */
+  engineMask?: EngineMask
 }
 
 const NO_OVERRIDES: Record<string, boolean> = {}
@@ -127,7 +134,7 @@ const alpha = (hex: string, a: number) => {
   return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`
 }
 
-export default function PriceChart({ candles, analysis, visible, layers, highlightId, onSelect, quote, focus, planEngine = 'both', levelOverrides = NO_OVERRIDES, chartStyle = 'candles' }: Props) {
+export default function PriceChart({ candles, analysis, visible, layers, highlightId, onSelect, quote, focus, planEngine = 'both', levelOverrides = NO_OVERRIDES, chartStyle = 'candles', engineMask = ALL_ENGINES }: Props) {
   const box = useRef<HTMLDivElement>(null)
   const chartRef = useRef<IChartApi | null>(null)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -311,14 +318,14 @@ export default function PriceChart({ candles, analysis, visible, layers, highlig
     const plans: DrawnPlan[] = []
     if (!raw && layers.plan && eng) {
       const worth = (r: typeof eng.orig | null) => !!r?.plan && (r.plan.actionable || ['BUY', 'HOLD', 'TRIM'].includes(r.verdict))
-      const on = (e: 'original' | 'analyst' | 'smc') => planEngine === 'both' || planEngine === e
-      if (on('original') && worth(eng.orig)) plans.push({ plan: eng.orig.plan!, tag: 'O', color: palette.plan })
-      if (on('analyst') && worth(eng.anly)) plans.push({ plan: eng.anly!.plan!, tag: 'A', color: palette.planAnly })
+      const on = (e: 'original' | 'analyst' | 'smc') => engineMask[e] && (planEngine === 'both' || planEngine === e)
+      if (on('original') && worth(eng.orig)) plans.push({ plan: eng.orig.plan!, tag: 'C', color: palette.plan })
+      if (on('analyst') && worth(eng.anly)) plans.push({ plan: eng.anly!.plan!, tag: 'L', color: palette.planAnly })
       if (on('smc') && worth(eng.smc)) plans.push({ plan: eng.smc!.plan!, tag: 'S', color: palette.planSmc })
     }
     const conf = lv?.confluence
     const zoneOn = (k: string) => levelOverrides[k] ?? layers.zones
-    const buyZones = raw || !conf ? null : [
+    const buyZones = raw || !conf || !engineMask.analyst ? null : [
       ...(conf.zone1 && zoneOn('zone1') ? [{ label: 'Buy zone 1', low: conf.zone1.low, high: conf.zone1.high, sources: conf.zone1.sources, kind: 'buy' as const }] : []),
       ...(conf.zone2 && zoneOn('zone2') ? [{ label: 'Buy zone 2', low: conf.zone2.low, high: conf.zone2.high, sources: conf.zone2.sources, kind: 'buy' as const }] : []),
       ...conf.sell_zones.slice(0, 3).flatMap((z, i) => (levelOverrides[`sell${i}`] ?? layers.sellz)
@@ -327,15 +334,17 @@ export default function PriceChart({ candles, analysis, visible, layers, highlig
     const drawn = raw ? [] : [...new Map([...visible.filter(p => p.category !== 'level'), ...levelPatterns(analysis?.patterns ?? [], layers, levelOverrides),
       ...smcPatterns(analysis?.patterns ?? [], layers, levelOverrides),
       ...visible.filter(p => p.category === 'level' && p.id === highlightId)].map(p => [p.id, p])).values()]
+      // an engine switched off hides its drawings (a pattern selected on purpose stays)
+      .filter(p => engineMask[engineOf(p)] || p.id === highlightId)
     overlay.current?.set({
       patterns: drawn, highlightId,
       // draw only the 6 zones nearest to price (the full list is in the level ladder)
-      zones: !raw && layers.sr && lv ? [...lv.zones].sort((x, y) => Math.abs(x.price - close) - Math.abs(y.price - close)).slice(0, 6) : null,
-      pools: !raw && layers.pools ? lv?.pools ?? null : null,
-      profile: !raw && layers.vp ? lv?.volume_profile ?? null : null,
-      anchored: !raw && (levelOverrides.avp ?? layers.avp) ? lv?.anchored_profile ?? null : null,
+      zones: !raw && engineMask.original && layers.sr && lv ? [...lv.zones].sort((x, y) => Math.abs(x.price - close) - Math.abs(y.price - close)).slice(0, 6) : null,
+      pools: !raw && engineMask.original && layers.pools ? lv?.pools ?? null : null,
+      profile: !raw && engineMask.original && layers.vp ? lv?.volume_profile ?? null : null,
+      anchored: !raw && engineMask.analyst && (levelOverrides.avp ?? layers.avp) ? lv?.anchored_profile ?? null : null,
       plans, buyZones,
-      sessions: !raw && (levelOverrides.sess ?? layers.sess) ? sessionWindows(times, candles.timeframe) : null,
+      sessions: !raw && engineMask.smc && (levelOverrides.sess ?? layers.sess) ? sessionWindows(times, candles.timeframe) : null,
     })
     rsiOverlay.current?.set({ patterns: drawn.filter(p => p.lines.some(l => l.pane === 'rsi')), highlightId })
 
@@ -357,7 +366,7 @@ export default function PriceChart({ candles, analysis, visible, layers, highlig
     ms.sort((a, b) => (typeof a.time === 'number' && typeof b.time === 'number' ? a.time - b.time : String(a.time).localeCompare(String(b.time))))
     markers.current?.setMarkers(ms)
 
-    // plan price lines with axis labels; "O:" = Original, "A:" = Analyst, "S:" = SMC engine
+    // plan price lines with axis labels; "C:" = Classic, "L:" = Levels, "S:" = SMC engine
     const candle = s.current.candle
     if (candle) {
       priceLines.current.forEach(pl => candle.removePriceLine(pl))
@@ -365,7 +374,7 @@ export default function PriceChart({ candles, analysis, visible, layers, highlig
       const add = (price: number, color: string, title: string, style = LineStyle.Solid, width = 1) =>
         priceLines.current.push(candle.createPriceLine({ price, color, title, lineStyle: style, lineWidth: width as 1, axisLabelVisible: true }))
       for (const { plan, tag, color } of plans) {
-        const style = tag === 'A' ? LineStyle.Dashed : tag === 'S' ? LineStyle.LargeDashed : LineStyle.Solid
+        const style = tag === 'L' ? LineStyle.Dashed : tag === 'S' ? LineStyle.LargeDashed : LineStyle.Solid
         if (plan.trigger) add(plan.trigger, palette.warn, `${tag}: Trigger`, LineStyle.Dashed, 2)
         add(plan.ideal, color, `${tag}: Limit`, style, 2)
         if (plans.length === 1) add(plan.max_chase, palette.warn, `${tag}: Max chase`, LineStyle.Dotted)
@@ -378,7 +387,7 @@ export default function PriceChart({ candles, analysis, visible, layers, highlig
         if (rv.suggested_stop) priceLines.current.push(candle.createPriceLine({ price: rv.suggested_stop, color: palette.bear, title: 'Trail stop', lineStyle: LineStyle.Solid, lineWidth: 2, axisLabelVisible: true }))
       }
     }
-  }, [visible, highlightId, layers, analysis, mapper, times, palette, candles, planEngine, levelOverrides])
+  }, [visible, highlightId, layers, analysis, mapper, times, palette, candles, planEngine, levelOverrides, engineMask])
 
   // ---- live quote updates today's candle (daily) or the current intraday bucket
   const liveBar = useRef<{ time: string; open: number; high: number; low: number; close: number } | null>(null)

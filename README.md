@@ -1,6 +1,6 @@
 # CSE Advisor
 
-A personal **analysis tool** for the Colombo Stock Exchange (CSE). You choose 10–20 stocks. After every close it scans each one for chart patterns, liquidity, levels and company announcements, and shows what its three rule-based engines (Original, Analyst, Smart-Money) found, **with the reason and the arithmetic behind every number**. Detected patterns are drawn on a live chart, and an optional Telegram bot sends a daily digest.
+A personal **analysis tool** for the Colombo Stock Exchange (CSE). You choose 10–20 stocks. After every close it scans each one for chart patterns, liquidity, levels and company announcements, and shows what its three rule-based engines (Classic, Levels, Smart-Money) found, **with the reason and the arithmetic behind every number**. Detected patterns are drawn on a live chart, and an optional Telegram bot sends a daily digest.
 
 Everything runs on your own computer with free data. There is no login, no cloud service and no trading: it never places an order.
 
@@ -34,13 +34,19 @@ All screenshots show the app on 4 Nov 2026 with seven example stocks. They are i
 
 ![Pattern drawer](docs/screenshots/05-pattern-drawer.png)
 
+**Show one engine at a time** (toolbar `5) Show CLS | LVL | SMC`): switch engines on and off, or double-click one to show only its patterns, zones and plan lines.
+
+| Levels engine only | SMC engine only |
+|---|---|
+| ![Levels only](docs/screenshots/15-engine-toggle-levels-only.png) | ![SMC only](docs/screenshots/16-engine-toggle-smc-only.png) |
+
 **Comparing the engines:** each engine's setup, prices, checklist and reasons for and against, written in plain language. When they disagree, the page says so.
 
 ![Compare](docs/screenshots/14-recommendation-compare.png)
 
-| Original engine | Smart-money engine |
+| Classic engine | Smart-money engine |
 |---|---|
-| ![Original](docs/screenshots/06-original-engine.png) | ![SMC](docs/screenshots/07-smc-engine.png) |
+| ![Classic](docs/screenshots/06-classic-engine.png) | ![SMC](docs/screenshots/07-smc-engine.png) |
 
 **Intraday charts** (the engines run on demand on the bars of the chart's timeframe):
 
@@ -116,7 +122,9 @@ The app has no login, so by default only this PC can open it.
 
 Every stock is analysed by three independent engines. Each has its own verdict, score, trade plan and explanation, and the app shows whether they **agree** (● all the same verdict), are **mixed** (◐) or **differ** (○, at least one bullish and one bearish).
 
-| | **ORIG**: Original engine | **ANLY**: Analyst engine | **SMC**: Smart-money engine |
+> **Engine names.** The three engines are **CLS** (Classic: chart and candlestick patterns plus a 5-factor score), **LVL** (Levels: Fibonacci, confluence buy / sell zones, trendlines and level entries) and **SMC** (smart-money concepts). Before 4 Nov 2026 the first two were called *Original* and *Analyst*; internally their ids are still `original` and `analyst` (stored analyses, saved preferences and the API use those).
+
+| | **CLS**: Classic engine | **LVL**: Levels engine | **SMC**: Smart-money engine |
 |---|---|---|---|
 | Built from | the first version of the app | the KZOO / JKH / RIL example posts | the order-block and equilibrium bootcamp screenshots, plus common ICT / SMC practice for fair value gaps, liquidity sweeps, BOS / CHoCH and break & retest |
 | Score | 5-factor composite: trend & patterns, liquidity, fundamentals, news, market | level score: starts at 50, then ± points for location, momentum, volume, extension, rights-issue phase, value range, reward:risk | SMC score: starts at 50, then ± points for weekly bias, daily BOS / CHoCH, discount vs premium, OTE band, tapping an unmitigated order block or fair value gap, block + gap overlap, weekly block underneath, fresh sell-/buy-side sweeps, supply overhead, reward:risk |
@@ -125,7 +133,7 @@ Every stock is analysed by three independent engines. Each has its own verdict, 
 | Targets | resistance zones, swing highs, 52-week high, pattern targets | sell zones (confluence), resistance, swing highs | buy-side liquidity above (untaken swing highs, equal highs), bearish blocks / gaps overhead, the dealing-range high |
 | Rights issues | a red flag for 60 days (as originally built) | handled by the corporate-action phases (TERP, overhang) | not used (pure price action) |
 
-All three engines use the same rights/split-adjusted prices. Alerts and the Telegram report carry an `[ORIG]` / `[ANLY]` / `[SMC]` tag.
+All three engines use the same rights/split-adjusted prices. Alerts and the Telegram report carry an `[CLS]` / `[LVL]` / `[SMC]` tag.
 
 ### How the SMC engine reads a chart
 
@@ -148,17 +156,17 @@ Black background, amber labels, white data, IBM Plex Mono, Bloomberg-style comma
   - on a stock page a function or a timeframe on its own works too (`DES <GO>`, `4H <GO>`)
 - **Keys:** `/` focuses the command line, `F1` help, `F2` watchlist, `F3` positions, `F4` market, `F8` settings, `P` opens the pattern chooser, `Esc` closes it; on the watchlist `↑ ↓ Enter`.
 - **Watchlist (WL):** a monitor table with last price, change, 60-day sparkline, all three engines' verdicts and scores, the agreement, trend, liquidity and the next planned level. Click a column to sort.
-- **Stock page:** security header, numbered toolbar (`1) Patterns & layers`, `2) Re-analyse`, `3) 1M 5M 15M 1H 4H 1D 1W`, `4) Candles | Line | Zig-zag`, `5) Raw prices`), the three engine panels, an "on chart" strip listing every drawing (✕ hides it), the chart, and tabs:
-  - **REC:** Compare (side-by-side table), Original, Analyst and SMC views, each with summary, score breakdown, BUY checklist, reasons for/against, buy- and sell-price tables that say how every price was derived, sizing, scenarios and what to watch. The Analyst view adds the Entry 1 / Entry 2 / Zone 2 table, the level ladder and the momentum/volume/risk checks. The SMC view adds the smart-money context (weekly and daily structure, dealing range, equilibrium, OTE, open blocks and gaps, liquidity above and below) and the OB / FVG / retest entry table.
+- **Stock page:** security header, numbered toolbar (`1) Patterns & layers`, `2) Re-analyse`, `3) 1M 5M 15M 1H 4H 1D 1W`, `4) Candles | Line | Zig-zag`, `5) Show CLS | LVL | SMC`, `6) Raw prices`), the three engine panels, an "on chart" strip listing every drawing (✕ hides it), the chart, and tabs:
+  - **REC:** Compare (side-by-side table), Classic, Levels and SMC views, each with summary, score breakdown, BUY checklist, reasons for/against, buy- and sell-price tables that say how every price was derived, sizing, scenarios and what to watch. The Analyst view adds the Entry 1 / Entry 2 / Zone 2 table, the level ladder and the momentum/volume/risk checks. The SMC view adds the smart-money context (weekly and daily structure, dealing range, equilibrium, OTE, open blocks and gaps, liquidity above and below) and the OB / FVG / retest entry table.
   - **DES** fundamentals (read automatically from the statement PDFs), **LIQ** liquidity & levels, **CN** catalysts: results, dividends, director dealings, calendar, headlines and announcements, with the scorecard; **CACS** corporate actions & CSV import.
   - The header also shows the **Catalysts** chip (Supportive / Neutral / Cautious) and **relative strength** (leader / in line / laggard: the stock's move minus the ASPI's over 20 / 60 / 120 sessions, and vs its sector if you set one in SET).
 - **Pattern & layer chooser (`1) Patterns & layers`, `P` or `PAT`):** a large panel that slides in from the right while the chart keeps updating.
   - search box across everything
-  - presets: Clean, Original, Analyst, SMC, All 3 (default), Everything, None, My default, Save as default
-  - 1) Original patterns ranked by priority (Top 5 / High / All / None, filters for category, direction, status and age, a switch per pattern)
-  - 2) Analyst levels, each with its own switch: Fibonacci leg, Buy zone 1 / 2, sell zones, each trendline, swing labels, anchored POC & value area, analyst patterns
+  - presets: Clean, Classic, Levels, SMC, All 3 (default), Everything, None, My default, Save as default
+  - 1) Classic patterns ranked by priority (Top 5 / High / All / None, filters for category, direction, status and age, a switch per pattern)
+  - 2) Levels, each with its own switch: Fibonacci leg, Buy zone 1 / 2, sell zones, each trendline, swing labels, anchored POC & value area, levels-engine patterns
   - 3) SMC drawings, each with its own switch: key order blocks (nearest below and above price, on by default), all blocks on the chart's timeframe and its higher timeframe, fair value gaps, premium / discount range, BOS / CHoCH lines, sweeps and equal highs / lows, and (1M / 5M / 15M) the CSE session windows
-  - 4) Chart & indicators: which engine's trade plan to draw (Original = white solid `O:`, Analyst = pink dashed `A:`, SMC = lavender long dashes `S:`, or all), S/R, volume profile, liquidity pools, XR markers, EMAs, Bollinger, volume, RSI, MACD
+  - 4) Chart & indicators: which engine's trade plan to draw (Classic = white solid `C:`, Levels = pink dashed `L:`, SMC = lavender long dashes `S:`, or all), S/R, volume profile, liquidity pools, XR markers, EMAs, Bollinger, volume, RSI, MACD
 
   Choices are saved per stock.
 - **Positions (PORT):** record what you bought; each evening all three engines review it as HOLD / TRIM / SELL with a stop. The page totals the book **after fees both ways** (`costs.brokerage_pct_per_side`): invested, market value, unrealised P/L if sold today, realised P/L, what is **at risk if every stop is hit** (in LKR and % of `risk.capital_lkr`), the largest position and the split by sector.
@@ -188,7 +196,7 @@ cse.lk only gives **today's** individual trades. There is no intraday history, s
 
 - On 1M / 5M / 15M / 1H / 4H the three engines run **on demand** on that timeframe's bars (the last 1,500 completed bars, about 1 s). The verdicts, plans, patterns and the pattern chooser on the stock page are then that timeframe's.
 - The **watchlist, the nightly verdicts, alerts and Telegram stay on daily bars**. The intraday strip on the stock page shows the daily verdicts next to the intraday ones.
-- Liquidity, fundamentals and news describe the stock, not the bar size, so they come from the latest daily analysis. On intraday charts the Original engine's market factor uses the ASPI on the same timeframe (from TradingView `CSELK:ASI` and cse.lk's intraday ASPI).
+- Liquidity, fundamentals and news describe the stock, not the bar size, so they come from the latest daily analysis. On intraday charts the Classic engine's market factor uses the ASPI on the same timeframe (from TradingView `CSELK:ASI` and cse.lk's intraday ASPI).
 - **SMC higher timeframe:** 1M → 5M, 5M → 15M, 15M → 1H, 1H → 4H, 4H → daily (and daily → weekly as before). Texts and the checklist name the right timeframes ("1H bias is bullish").
 - **CSE session windows**, the kill-zone adaptation: on 1M / 5M / 15M the drawer (3) SMC) can shade the opening hour (09:30–10:30) and the closing hour (13:30–14:30), when most CSE volume trades. The ICT London / New York kill zones don't apply to Colombo. The windows are shown only and **not scored**: there's no evidence they help.
 - **Fees:** CSE costs (~1.1–1.3% a side) are bigger than most 5M / 15M targets, so the reward:risk-after-fees check usually fails on small timeframes and the engines mostly say WATCH or AVOID. That is the rules working, not a bug. Illiquid stocks also have gaps: a bar exists only when something traded.
@@ -198,6 +206,7 @@ cse.lk only gives **today's** individual trades. There is no intraday history, s
 ### Line chart, zig-zag, and the 1-minute chart
 
 - **Candles | Line** (toolbar `4)`): the line is the close price, which shows the trend with less noise. The choice is remembered per stock. Patterns, plan lines, zones and markers are drawn the same in both styles.
+- **Show CLS | LVL | SMC** (toolbar `5)`): choose whose drawings are on the main chart. Click an engine to switch it on or off, double-click to show only that engine. Switched-off engines lose their patterns, zones and plan lines (Original: patterns, support / resistance, volume profile; Analyst: Fibonacci, trendlines, swings, buy / sell zones; SMC: order blocks, gaps, BOS / CHoCH, liquidity). Indicators (EMAs, Bollinger, volume, RSI) stay. It is remembered per stock, and the Original / Analyst / SMC presets set it too.
 - **Zig-zag**: a line through the swing highs and lows; price has to move 2 × ATR(14) against the running extreme to turn it, so it ignores small wiggles. On the line chart it joins swing *closes*, on candles it joins swing highs and lows. The last segment is the leg still in progress, so it can still change. It is also in the drawer under layers.
 - **1M**: 5,000 TradingView minute bars (about 5 weeks for a liquid stock) plus every minute recorded from cse.lk trades. Thin stocks trade in few minutes, so the 1M line looks like steps and the engines see long flat runs: use it to see *when* trades happened, not for pattern signals. The intraday table's unique key now includes the source (it holds cse and TradingView 1m bars for the same minute); the app rebuilds the table once on start, keeping every row.
 - **Next report dates** (DES tab, *Financial reports*): the next quarterly and the next annual report are listed above the PDF links with an expected date and the usual range, estimated from the company's own past filing delays (period end + the median days it took). CSE publishes no results calendar, so these are estimates; a company that changed its year end (DOCK) starts over and says the estimate is rough.
@@ -228,7 +237,7 @@ Supportive needs a total of +2, Cautious −2 (or a hard red flag). Below the sc
 
 **Where the facts come from.** CSE's announcement list has titles only. Its site uses a detail endpoint, `getAnnouncementById` (found in cse.lk's own code), that returns typed records: dividend per share and XD / payment / AGM dates, each director trade with buy / sell, quantity and price, director appointments and AGM dates. Generic *Corporate Disclosure* notices fall back to `getGeneralAnnouncementById`, whose attachment file name carries the real subject ("Appointment of Deputy Chairman"). Each announcement is read once: dividends and dealings back 3 years, the rest 400 days. The first catch-up took about 9 minutes for six stocks.
 
-**Changes in how announcements count:** classification now uses that text, with specific rules first and the generic "Corporate Disclosure" rule last. Director dealings finally have a direction. The Original engine's existing *director selling* red flag can now fire, but only for a net sale of at least LKR 1M within 30 days (`DIRECTOR_SELL_MIN_LKR`); before this, dealings were never read, so it never fired. Matched headlines join the Original engine's news factor at materiality 1 and half their tone.
+**Changes in how announcements count:** classification now uses that text, with specific rules first and the generic "Corporate Disclosure" rule last. Director dealings finally have a direction. The Classic engine's existing *director selling* red flag can now fire, but only for a net sale of at least LKR 1M within 30 days (`DIRECTOR_SELL_MIN_LKR`); before this, dealings were never read, so it never fired. Matched headlines join the Classic engine's news factor at materiality 1 and half their tone.
 
 ## Financial statements, read automatically (DES)
 
@@ -238,7 +247,7 @@ Every evening the newest quarterly statements (`fundamentals.auto_reports`, defa
 - **Text handling:** amounts in Rs '000 are scaled to LKR. Commentary lines, note references and rows whose numbers print before the label are ignored.
 - **Last year:** each report also gives the **same quarter a year earlier** from its comparative column (marked *comparative*), so YoY growth and trailing-12-month figures work from the first evening.
 - **When a row is used:** EPS × shares matches its profit, NAV × shares matches equity, or a newer report's comparative column shows the same profit (within 2%). Anything else is kept as **check**: shown with the exact lines it was read from and a link to the PDF, **not used in any score** until you press *Confirm* or correct it. Manually entered rows are never overwritten. *Re-read statements* reads them again.
-- **Coverage today:** all six stocks' latest statements read cleanly. COMB, SAMP, LOLC, RIL and JKH have every recent quarter validated. KZOO's quarters before its 2026 rights issue stay as *check*, because its share count tripled, and two scanned reports can't be read. The Original engine's fundamentals factor, P/E and P/BV vs the market and the Analyst engine's value range now work for every stock.
+- **Coverage today:** all six stocks' latest statements read cleanly. COMB, SAMP, LOLC, RIL and JKH have every recent quarter validated. KZOO's quarters before its 2026 rights issue stay as *check*, because its share count tripled, and two scanned reports can't be read. The Classic engine's fundamentals factor, P/E and P/BV vs the market and the Levels engine's value range now work for every stock.
 
 ## More from cse.lk (shown only, not scored)
 
@@ -307,7 +316,7 @@ Three tools, all rerunnable, answer three different questions. Reports are writt
   Use the levels to plan; don't treat them as signals on their own.
 - **Settings:** turn pattern types on or off, run the analysis now, see job history.
 
-## How the Original engine scores (short version)
+## How the Classic engine scores (short version)
 
 | Factor | Weight | What it measures |
 |---|---|---|
@@ -362,7 +371,7 @@ Also covered:
 - portfolio totals after fees, risk to stops, concentration, relative strength (`tests/test_portfolio.py`)
 - intraday bars: tick → 1-minute → 5M / 15M / 1H / 4H buckets (and the 1M chart itself, `tests/test_report_dates_and_1m.py`) anchored at 09:30, the TradingView-vs-cse.lk choice per day, the per-day price adjustment, session-aware time labels, all three engines on a synthetic 15M series (SMC higher timeframe = 1H), the market-status fallback, exact company-name matching and the modified-audit-opinion red flag (`tests/test_intraday.py`)
 - the SMC detectors on a hand-built series with a known order block, fair value gap, BOS and sweep, and the SMC engine's independence from the other two (`tests/test_smc.py`, `tests/test_engines.py`)
-- the two engines run independently: the Original checklist and setups are untouched by the analyst inputs, a rights issue is still an Original red flag, and the Analyst calls on KZOO 5 Mar (AVOID) and 29 Oct (WATCH) (`tests/test_engines.py`)
+- the two engines run independently: the Classic checklist and setups are untouched by the Levels inputs, a rights issue is still a Classic red flag, and the Levels calls on KZOO 5 Mar (AVOID) and 29 Oct (WATCH) (`tests/test_engines.py`)
 - the corporate-action maths (TERP, factor, pre-rights equivalent, parsers)
 - log-scale Fibonacci, confluence zones, and the volatility and extension checks
 - **replay tests** that run the app on the dates of the KZOO / JKH / RIL example posts, using only the data available on each date, and check that it finds the analyst's levels and calls (`tests/test_replay.py`)

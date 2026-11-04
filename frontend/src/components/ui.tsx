@@ -11,12 +11,12 @@ export function VerdictBadge({ v, big = false }: { v: Verdict | null | undefined
   return <span className={`chip ${VERDICT_CLS[v]} ${big ? '!px-2.5 !text-sm !leading-6' : ''}`}>{v}</span>
 }
 
-/** ORIG / ANLY / SMC tag so every number says which engine produced it. */
+/** CLS / LVL / SMC tag so every number says which engine produced it. */
 export function EngineBadge({ e }: { e: 'original' | 'analyst' | 'smc' }) {
   return e === 'original'
-    ? <span className="chip border border-plan/60 text-plan" title="Original engine: patterns + 5-factor score">ORIG</span>
+    ? <span className="chip border border-plan/60 text-plan" title="Classic engine: chart & candlestick patterns + 5-factor score">CLS</span>
     : e === 'analyst'
-    ? <span className="chip border border-plan-anly text-plan-anly" title="Analyst engine: Fibonacci, confluence zones, level entries">ANLY</span>
+    ? <span className="chip border border-plan-anly text-plan-anly" title="Levels engine: Fibonacci, confluence zones, level entries">LVL</span>
     : <span className="chip border border-plan-smc text-plan-smc" title="SMC engine: order blocks, premium/discount, fair value gaps, liquidity sweeps">SMC</span>
 }
 

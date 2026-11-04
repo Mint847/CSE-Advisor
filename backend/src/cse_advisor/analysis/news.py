@@ -141,9 +141,9 @@ def event_text(ev: dict[str, Any]) -> str:
 # Rights issues are no longer a blanket red flag: corporate_actions.phases() handles the
 # XR gap (TERP) and the post-listing supply overhang explicitly.
 HARD_FLAGS = {"red_flag": 120, "suspension": 120, "dilution": 30}
-# a director's net sale must be at least this large (LKR) to count as the Original engine's "director selling" flag
+# a director's net sale must be at least this large (LKR) to count as the Classic engine's "director selling" flag
 DIRECTOR_SELL_MIN_LKR = 1_000_000
-# The Original engine keeps its original rule: a rights issue is a dilution red flag for 60 days.
+# The Classic engine keeps its original rule: a rights issue is a dilution red flag for 60 days.
 LEGACY_HARD_FLAGS = {**HARD_FLAGS, "rights_issue": 60}
 
 

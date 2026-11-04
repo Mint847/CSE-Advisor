@@ -5,7 +5,7 @@ import { api, ticker } from '../api'
 
 export const FUNCTIONS: { code: string; text: string; global?: boolean }[] = [
   { code: 'GP', text: 'Price chart & recommendation' },
-  { code: 'CMP', text: 'Compare the Original, Analyst and SMC engines' },
+  { code: 'CMP', text: 'Compare the Classic, Levels and SMC engines' },
   { code: 'SMC', text: 'Smart-money view: order blocks, premium/discount, liquidity' },
   { code: 'DES', text: 'Description: fundamentals & value checks' },
   { code: 'LIQ', text: 'Liquidity & levels' },

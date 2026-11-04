@@ -1,8 +1,8 @@
-"""The Analyst engine: level-based analysis modelled on the KZOO / JKH / RIL example posts.
+"""The Levels engine (id: analyst): level-based analysis modelled on the KZOO / JKH / RIL example posts.
 
-It runs next to (not inside) the Original engine in recommend.py. Inputs are the confluence
+It runs next to (not inside) the Classic engine in recommend.py. Inputs are the confluence
 buy zones, Fibonacci, trendlines, MA events, the extension / volatility / volume / drawdown
-signals and the corporate-action phase. Output has the same shape as the Original engine
+signals and the corporate-action phase. Output has the same shape as the Classic engine
 (verdict, score, plan, checklist, explanation) plus the Entry 1 / Entry 2 / Zone 2 table."""
 from __future__ import annotations
 
@@ -239,7 +239,7 @@ def _explain_levels(expl: dict, verdict: str, plan: dict | None, entries: list[d
             w.append(line + ".")
 
 
-# ============================================================================ Analyst engine
+# ============================================================================ Levels engine (id: analyst)
 ORDER = {"Entry 1": 0, "Entry 2": 1, "Zone 2": 2, "Base retest": 3}
 HARD = {"red_flag", "suspension"}
 
@@ -254,7 +254,7 @@ def _recent(patterns: list[dict], types: tuple[str, ...], age: int = 10) -> list
 
 def level_score(df: pd.DataFrame, trend: dict, patterns: list[dict], setups: list[dict], entries: list[dict],
                 ctx: dict, fundamentals: dict | None) -> tuple[float, list[dict[str, Any]]]:
-    """0-100 score for the Analyst engine: starts at 50 and every adjustment is listed."""
+    """0-100 score for the Levels engine: starts at 50 and every adjustment is listed."""
     last = df.iloc[-1]
     close = float(last["close"])
     sig, corp, ma, fib = ctx.get("signals") or {}, ctx.get("corporate") or {}, ctx.get("ma") or {}, ctx.get("fib")
@@ -359,7 +359,7 @@ def _position_review_analyst(pos: dict, df: pd.DataFrame, patterns: list[dict], 
 def recommend_analyst(symbol: str, name: str, df: pd.DataFrame, trend: dict, patterns: list[dict], zones: list[dict],
                       profile: dict, pools: list[dict], liquidity: dict, fundamentals: dict | None, news: dict | None,
                       position: dict | None, previous: dict | None, ctx: dict) -> dict[str, Any]:
-    """The Analyst engine (modelled on the KZOO / JKH / RIL posts): confluence buy zones, flip retests,
+    """The Levels engine (modelled on the KZOO / JKH / RIL posts): confluence buy zones, flip retests,
     trendline breaks and base retests; extension / volatility / rights-issue checks; level score."""
     cfg = settings()["signals"]
     acfg = _cfg()
@@ -436,7 +436,7 @@ def recommend_analyst(symbol: str, name: str, df: pd.DataFrame, trend: dict, pat
         if abs(d) >= 0.5:
             changes.append(f"Level score {'+' if d > 0 else ''}{d:.1f} (from {previous['score']:.0f} to {score:.0f}).")
     else:
-        changes.append("First Analyst-engine report for this stock.")
+        changes.append("First Levels-engine report for this stock.")
     expl["changes"] = changes
 
     s = f"{verdict}: {name} ({symbol}) has a level score of {score:.0f}/100. "
@@ -465,7 +465,7 @@ def recommend_analyst(symbol: str, name: str, df: pd.DataFrame, trend: dict, pat
     for n in corp.get("notes", [])[:1]:
         s += " " + n
     expl["summary"] = s
-    return {"engine": "analyst", "label": "Analyst", "verdict": verdict, "score": score, "adjustments": pts,
+    return {"engine": "analyst", "label": "Levels", "verdict": verdict, "score": score, "adjustments": pts,
             "plan": plan, "entries": entries, "setups": setups[:6], "checklist": checklist, "red_flags": hard_flags,
             "position_review": review, "explanation": expl, "close": close, "date": tkey(df.index[-1]),
             "signals": sig, "corporate": corp}

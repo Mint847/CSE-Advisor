@@ -32,8 +32,8 @@ export function readPalette(): Palette {
 export const CHART_FONT = '"IBM Plex Mono", ui-monospace, Consolas, monospace'
 
 /** A trade plan drawn on the chart, tagged with the engine that produced it. */
-export interface DrawnPlan { plan: Plan; tag: 'O' | 'A' | 'S'; color: string }
-const PLAN_DASH: Record<DrawnPlan['tag'], number[]> = { O: [], A: [5, 3], S: [10, 4] }
+export interface DrawnPlan { plan: Plan; tag: 'C' | 'L' | 'S'; color: string }
+const PLAN_DASH: Record<DrawnPlan['tag'], number[]> = { C: [], L: [5, 3], S: [10, 4] }
 
 /** Maps bar labels to logical bar indexes, snapping to the bar on/before and projecting future times.
  *  Daily labels are YYYY-MM-DD (projected on weekdays); intraday labels are 'YYYY-MM-DD HH:MM' in Colombo
@@ -233,7 +233,7 @@ export class PatternOverlay implements ISeriesPrimitive<Time> {
         ctx.setLineDash([])
         label(ctx, `${z.kind === 'support' ? 'S' : 'R'} ${z.low.toFixed(2)}–${z.high.toFixed(2)} ×${z.touches}`, 6, y1 + h / 2, col, pal.bg, 'left')
       }
-      // trade-plan buy zones, one strip per engine (O = Original, A = Analyst, S = SMC)
+      // trade-plan buy zones, one strip per engine (C = Classic, L = Levels, S = SMC)
       const np = this.state.plans.length
       this.state.plans.forEach((dp, i) => {
         const plan = dp.plan

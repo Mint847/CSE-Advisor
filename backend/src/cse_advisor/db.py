@@ -218,7 +218,7 @@ class Analysis(Base):
     date: Mapped[date] = mapped_column(Date, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     verdict: Mapped[str] = mapped_column(String(10))
-    score: Mapped[float] = mapped_column(Float)                    # Original engine
+    score: Mapped[float] = mapped_column(Float)                    # Classic engine
     verdict_analyst: Mapped[str | None] = mapped_column(String(10), nullable=True)
     score_analyst: Mapped[float | None] = mapped_column(Float, nullable=True)
     verdict_smc: Mapped[str | None] = mapped_column(String(10), nullable=True)

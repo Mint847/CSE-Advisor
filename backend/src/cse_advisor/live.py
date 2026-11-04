@@ -156,7 +156,7 @@ class LiveQuotes:
                         msgs.append(("target", f"🎯 {sym} at {price:,.2f} reached target {tgt:,.2f}"))
                 else:
                     rs = (a.recommendation or {}).get("smc") or {}
-                    for tag, verdict, plan in (("ORIG", a.verdict, ro.get("plan")), ("ANLY", a.verdict_analyst, (ra or {}).get("plan")),
+                    for tag, verdict, plan in (("CLS", a.verdict, ro.get("plan")), ("LVL", a.verdict_analyst, (ra or {}).get("plan")),
                                                ("SMC", a.verdict_smc, rs.get("plan"))):
                         if not plan or verdict not in ("BUY", "WATCH"):
                             continue
