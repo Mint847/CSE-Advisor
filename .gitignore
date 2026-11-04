@@ -1,0 +1,19 @@
+backend/.venv/
+backend/data/
+backend/.env
+**/__pycache__/
+*.egg-info/
+.pytest_cache/
+frontend/node_modules/
+frontend/dist/
+KZOO/
+JKH/
+RIL/
+Order Blocks/
+equillibrium/
+
+*.db
+*.db-wal
+*.db-shm
+*.log
+.env

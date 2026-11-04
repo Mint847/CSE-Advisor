@@ -1,0 +1,36 @@
+[project]
+name = "cse-advisor"
+version = "0.1.0"
+description = "Personal Colombo Stock Exchange analysis & recommendation web app"
+requires-python = ">=3.11"
+dependencies = [
+  "fastapi",
+  "uvicorn[standard]",
+  "sqlalchemy>=2",
+  "pandas",
+  "numpy",
+  "scipy",
+  "httpx",
+  "apscheduler",
+  "pyyaml",
+  "tzdata",
+  "matplotlib",
+  "mplfinance",
+  "six",
+  "python-dotenv",
+  "pypdf",
+]
+
+[project.optional-dependencies]
+dev = ["pytest"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src", "tests"]

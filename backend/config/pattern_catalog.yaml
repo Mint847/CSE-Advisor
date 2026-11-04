@@ -1,0 +1,77 @@
+# NOTE (2026-11-02 walk-forward test on 40 CSE stocks): no pattern group showed a
+# statistically reliable edge on its own; these priors are display weights, not hit rates.
+# Pattern catalog: tier, default visibility and base reliability (0-1).
+# base_reliability is a prior until the CSE backtest scorecard replaces it.
+# tier 1 = chart patterns & liquidity (most useful for swing trading)
+# tier 2 = multi-candle patterns, tier 3 = single-candle patterns
+
+chart_pattern:
+  ascending_triangle:      {name: "Ascending triangle",        tier: 1, enabled: true, base_reliability: 0.72}
+  descending_triangle:     {name: "Descending triangle",       tier: 1, enabled: true, base_reliability: 0.70}
+  symmetric_triangle:      {name: "Symmetric triangle",        tier: 1, enabled: true, base_reliability: 0.62}
+  rectangle:               {name: "Rectangle / range",         tier: 1, enabled: true, base_reliability: 0.64}
+  bull_flag:               {name: "Bull flag",                 tier: 1, enabled: true, base_reliability: 0.68}
+  bear_flag:               {name: "Bear flag",                 tier: 1, enabled: true, base_reliability: 0.66}
+  rising_wedge:            {name: "Rising wedge",              tier: 1, enabled: true, base_reliability: 0.62}
+  falling_wedge:           {name: "Falling wedge",             tier: 1, enabled: true, base_reliability: 0.64}
+  double_top:              {name: "Double top",                tier: 1, enabled: true, base_reliability: 0.66}
+  double_bottom:           {name: "Double bottom",             tier: 1, enabled: true, base_reliability: 0.68}
+  head_and_shoulders:      {name: "Head & shoulders",          tier: 1, enabled: true, base_reliability: 0.70}
+  inverse_head_and_shoulders: {name: "Inverse head & shoulders", tier: 1, enabled: true, base_reliability: 0.70}
+
+liquidity:
+  liquidity_sweep_low:     {name: "Liquidity sweep (lows)",    tier: 1, enabled: true, base_reliability: 0.66}
+  liquidity_sweep_high:    {name: "Liquidity sweep (highs)",   tier: 1, enabled: true, base_reliability: 0.64}
+  squeeze_breakout_up:     {name: "Bollinger squeeze breakout ↑", tier: 1, enabled: true, base_reliability: 0.62}
+  squeeze_breakout_down:   {name: "Bollinger squeeze breakout ↓", tier: 1, enabled: true, base_reliability: 0.60}
+  volume_awakening:        {name: "Volume awakening",          tier: 1, enabled: true, base_reliability: 0.60}
+
+divergence:
+  bullish_rsi_divergence:  {name: "Bullish RSI divergence",    tier: 1, enabled: true, base_reliability: 0.60}
+  bearish_rsi_divergence:  {name: "Bearish RSI divergence",    tier: 1, enabled: true, base_reliability: 0.58}
+  hidden_bullish_divergence: {name: "Hidden bullish divergence", tier: 2, enabled: true, base_reliability: 0.52, engine: analyst}
+  hidden_bearish_divergence: {name: "Hidden bearish divergence", tier: 2, enabled: true, base_reliability: 0.52, engine: analyst}
+
+# engine: analyst = from the KZOO/JKH/RIL analyst methods; used only by the Analyst engine.
+# Levels: drawn through the chart layers (Fibonacci / Trendlines / Structure), not the priority list.
+level:
+  fibonacci:               {name: "Fibonacci retracement",     tier: 1, enabled: true, base_reliability: 0.60, engine: analyst}
+  trendline_resistance:    {name: "Falling trendline",          tier: 1, enabled: true, base_reliability: 0.58, engine: analyst}
+  trendline_support:       {name: "Rising trendline",           tier: 1, enabled: true, base_reliability: 0.58, engine: analyst}
+  swing_structure:         {name: "Swing structure (HH/HL/LH/LL)", tier: 2, enabled: true, base_reliability: 0.50, engine: analyst}
+
+# engine: smc = smart-money concepts, used only by the SMC engine; drawn from the SMC chart layers.
+smc:
+  smc_structure:           {name: "Market structure (BOS / CHoCH)", tier: 1, enabled: true, base_reliability: 0.55, engine: smc}
+  bullish_order_block:     {name: "Bullish order block",       tier: 1, enabled: true, base_reliability: 0.55, engine: smc}
+  bearish_order_block:     {name: "Bearish order block",       tier: 1, enabled: true, base_reliability: 0.55, engine: smc}
+  weekly_bullish_order_block: {name: "Weekly bullish order block", tier: 1, enabled: true, base_reliability: 0.55, engine: smc}
+  weekly_bearish_order_block: {name: "Weekly bearish order block", tier: 1, enabled: true, base_reliability: 0.55, engine: smc}
+  bullish_fvg:             {name: "Bullish fair value gap",    tier: 2, enabled: true, base_reliability: 0.50, engine: smc}
+  bearish_fvg:             {name: "Bearish fair value gap",    tier: 2, enabled: true, base_reliability: 0.50, engine: smc}
+  sell_side_sweep:         {name: "Sell-side liquidity sweep", tier: 1, enabled: true, base_reliability: 0.55, engine: smc}
+  buy_side_sweep:          {name: "Buy-side liquidity sweep",  tier: 1, enabled: true, base_reliability: 0.55, engine: smc}
+  equal_highs:             {name: "Equal highs (buy-side liquidity)", tier: 2, enabled: true, base_reliability: 0.50, engine: smc}
+  equal_lows:              {name: "Equal lows (sell-side liquidity)", tier: 2, enabled: true, base_reliability: 0.50, engine: smc}
+  premium_discount:        {name: "Premium / discount range",  tier: 1, enabled: true, base_reliability: 0.50, engine: smc}
+
+candlestick:
+  bullish_engulfing:      {name: "Bullish engulfing",         tier: 2, enabled: true, base_reliability: 0.56}
+  bearish_engulfing:       {name: "Bearish engulfing",         tier: 2, enabled: true, base_reliability: 0.55}
+  morning_star:            {name: "Morning star",              tier: 2, enabled: true, base_reliability: 0.58}
+  evening_star:            {name: "Evening star",              tier: 2, enabled: true, base_reliability: 0.57}
+  three_white_soldiers:    {name: "Three white soldiers",      tier: 2, enabled: true, base_reliability: 0.56}
+  three_black_crows:       {name: "Three black crows",         tier: 2, enabled: true, base_reliability: 0.56}
+  piercing_line:           {name: "Piercing line",             tier: 2, enabled: true, base_reliability: 0.53}
+  dark_cloud_cover:        {name: "Dark cloud cover",          tier: 2, enabled: true, base_reliability: 0.53}
+  bullish_harami:          {name: "Bullish harami",            tier: 2, enabled: true, base_reliability: 0.50}
+  bearish_harami:          {name: "Bearish harami",            tier: 2, enabled: true, base_reliability: 0.50}
+  hammer:                  {name: "Hammer",                    tier: 3, enabled: true, base_reliability: 0.52}
+  hanging_man:             {name: "Hanging man",               tier: 3, enabled: true, base_reliability: 0.48}
+  shooting_star:           {name: "Shooting star",             tier: 3, enabled: true, base_reliability: 0.52}
+  inverted_hammer:         {name: "Inverted hammer",           tier: 3, enabled: true, base_reliability: 0.48}
+  doji:                    {name: "Doji",                      tier: 3, enabled: true, base_reliability: 0.40}
+  dragonfly_doji:          {name: "Dragonfly doji",            tier: 3, enabled: true, base_reliability: 0.46}
+  gravestone_doji:         {name: "Gravestone doji",           tier: 3, enabled: true, base_reliability: 0.46}
+  bullish_marubozu:        {name: "Bullish marubozu",          tier: 3, enabled: true, base_reliability: 0.47}
+  bearish_marubozu:        {name: "Bearish marubozu",          tier: 3, enabled: true, base_reliability: 0.47}

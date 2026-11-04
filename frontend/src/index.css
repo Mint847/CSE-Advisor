@@ -1,0 +1,131 @@
+@import "tailwindcss";
+
+/* Terminal theme: black only, amber labels, white data, monospace, square corners.
+   Chart / drawing colours were checked on #000 with the dataviz palette validator:
+   up/down #26d07c / #ff433d pass CVD separation (ΔE 9.5); the four drawing hues pass the
+   normal-vision and contrast checks, and every drawing also carries a text label and its own
+   dash style, because a 4-hue set cannot pass colour-blind separation on every pair. */
+:root {
+  color-scheme: dark;
+  --bg: #000000;
+  --panel: #0a0a0a;
+  --panel-2: #161616;
+  --panel-3: #202020;
+  --border: #2a2a2a;
+  --text: #f0f0f0;          /* data values */
+  --muted: #9a9a9a;
+  --amber: #ffa028;         /* labels, headers, function names */
+  --orange: #fb8b1e;
+  --yellow: #ffd23f;        /* command line & editable fields */
+  --blue: #5aa9ff;          /* links */
+  --cyan: #4af6c3;
+  --menu: #7a1712;          /* numbered toolbar buttons */
+  --menu-hi: #9c2219;
+  --accent: var(--amber);
+  --bull: #26d07c;
+  --bear: #ff433d;
+  --neutral: #9a9a9a;
+  --warn: #ffa028;
+  /* drawings on the chart */
+  --support: #2a71d6;
+  --resistance: #db640e;
+  --fib: #19aa8e;
+  --plan: #e6e6e6;          /* Original-engine plan */
+  --plan-anly: #db327b;     /* Analyst-engine plan */
+  --plan-smc: #c08cff;      /* SMC-engine plan (passes CVD + normal-vision checks against every chart hue) */
+  --ema21: #ffa028;
+  --ema50: #cfcfcf;
+  --ema200: #8038d1;
+  --rsi: #c9a0ff;
+  --macd: #19aa8e;
+  --macd-signal: #db640e;
+  --chart-grid: #141414;
+  --series-1: var(--fib);
+  --series-2: var(--resistance);
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-panel: var(--panel);
+  --color-panel-2: var(--panel-2);
+  --color-panel-3: var(--panel-3);
+  --color-line: var(--border);
+  --color-fg: var(--text);
+  --color-muted: var(--muted);
+  --color-accent: var(--accent);
+  --color-amber: var(--amber);
+  --color-yellow: var(--yellow);
+  --color-blue: var(--blue);
+  --color-cyan: var(--cyan);
+  --color-menu: var(--menu);
+  --color-bull: var(--bull);
+  --color-bear: var(--bear);
+  --color-neutral: var(--neutral);
+  --color-warn: var(--warn);
+  --color-plan: var(--plan);
+  --color-plan-anly: var(--plan-anly);
+  --color-plan-smc: var(--plan-smc);
+  --color-support: var(--support);
+  --color-resistance: var(--resistance);
+  --font-sans: "IBM Plex Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+  --font-mono: "IBM Plex Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+}
+
+html, body { background: var(--bg); color: var(--text); }
+body { margin: 0; font-family: var(--font-mono); font-size: 13px; line-height: 1.45; -webkit-font-smoothing: antialiased; }
+::selection { background: var(--amber); color: #000; }
+a { color: inherit; }
+.num { font-variant-numeric: tabular-nums; }
+
+@layer components {
+/* panels */
+.card { background: var(--panel); border: 1px solid var(--border); border-radius: 0; }
+.panel-title { display: flex; align-items: center; gap: 8px; min-height: 26px; padding: 3px 8px; background: var(--panel-2);
+  border-bottom: 1px solid var(--border); color: var(--amber); font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; }
+.label { color: var(--amber); font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
+
+/* tags */
+.chip { display: inline-flex; align-items: center; gap: 4px; padding: 0 6px; border-radius: 0; font-size: 11px; font-weight: 600; line-height: 18px; white-space: nowrap; text-transform: uppercase; letter-spacing: .03em; }
+
+/* buttons */
+.btn { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 0; font: inherit; font-size: 12px; font-weight: 500;
+  border: 1px solid var(--border); background: var(--panel-2); color: var(--text); cursor: pointer; text-transform: uppercase; letter-spacing: .03em; }
+.btn:hover { background: var(--panel-3); }
+.btn-primary { background: var(--amber); border-color: var(--amber); color: #000; font-weight: 600; }
+.btn-primary:hover { background: var(--yellow); border-color: var(--yellow); }
+.btn-menu { background: var(--menu); border-color: var(--menu); color: #fff; }
+.btn-menu:hover { background: var(--menu-hi); }
+.btn-menu .key { color: #fff; opacity: .75; margin-right: 2px; }
+.btn[aria-pressed="true"], .btn[aria-checked="true"] { background: var(--amber); border-color: var(--amber); color: #000; }
+.btn:disabled { opacity: .5; cursor: default; }
+
+/* inputs: yellow text on black, amber focus */
+.input { padding: 3px 8px; border-radius: 0; border: 1px solid var(--border); background: #000; color: var(--yellow); font: inherit; font-size: 13px; min-width: 0; }
+.input::placeholder { color: #6b6b6b; }
+.input:focus, .btn:focus-visible, button:focus-visible, a:focus-visible { outline: 1px solid var(--amber); outline-offset: 0; }
+select.input { color: var(--text); }
+input[type="checkbox"] { accent-color: var(--amber); }
+
+/* tabs */
+.tab { padding: 5px 12px; font: inherit; font-size: 12px; font-weight: 500; color: var(--muted); text-transform: uppercase; letter-spacing: .04em;
+  border: 0; border-bottom: 2px solid transparent; background: none; cursor: pointer; white-space: nowrap; }
+.tab:hover { color: var(--text); }
+.tab[aria-selected="true"] { color: var(--amber); border-bottom-color: var(--amber); background: var(--panel-2); }
+
+/* dense monitor tables */
+.bb-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.bb-table th { color: var(--amber); font-weight: 500; text-align: left; text-transform: uppercase; letter-spacing: .03em; padding: 4px 8px;
+  border-bottom: 1px solid var(--border); white-space: nowrap; background: var(--panel-2); position: sticky; top: 0; }
+.bb-table td { padding: 3px 8px; border-bottom: 1px solid #141414; white-space: nowrap; }
+.bb-table tbody tr:nth-child(even) td { background: #070707; }
+.bb-table tbody tr.row-link { cursor: pointer; }
+.bb-table tbody tr.row-link:hover td, .bb-table tbody tr[aria-selected="true"] td { background: #1d1405; }
+
+/* switch used in the pattern drawer */
+.switch { position: relative; width: 30px; height: 16px; flex: none; background: var(--panel-3); border: 1px solid var(--border); cursor: pointer; }
+.switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 10px; height: 10px; background: var(--muted); transition: left .12s; }
+.switch[aria-checked="true"] { background: #3a2604; border-color: var(--amber); }
+.switch[aria-checked="true"]::after { left: 16px; background: var(--amber); }
+
+.scroll-thin { scrollbar-width: thin; scrollbar-color: #333 transparent; }
+}
