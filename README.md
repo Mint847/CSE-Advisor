@@ -27,7 +27,9 @@ It runs on your own computer with free data. There is no login, no cloud service
 - **Data** (`cse_client.py`, `tv_client.py`, `ingest.py`, `intraday.py`): daily history back to 2012, intraday bars from 1 minute to 4 hours, announcements, and financial statements read from the PDFs by rules (no LLM). Prices are adjusted for rights issues and splits.
 - **Analysis** (`analysis/`): indicators, chart and candlestick patterns, Fibonacci and confluence levels, liquidity, smart-money structure, corporate actions, catalysts.
 - **Engines** (`strategy/`): three independent rule sets, each giving a verdict, score, trade plan (entry, stop, targets after fees) and a plain-language explanation. The UI shows whether they agree.
-- **Jobs** (`jobs.py`): the end-of-day run at 15:30 Sri Lanka time on weekdays, plus intraday checks while the app is open.
+- **Jobs** (`jobs.py`): the end-of-day run at 15:30 Sri Lanka time on weekdays (analysis, forward-test journal, alerts, a nightly database backup), plus intraday checks while the app is open.
+- **Stock selection** (`screener.py`, `analysis/selection.py`): after the close, ranks every liquid CSE stock on the one selection rule that held up in the tests (below). Shown only.
+- **Forward-test journal** (`journal.py`): each evening's calls are written down once and scored later, as an honest check on the back-tests.
 - **UI** (`frontend/`): React, TypeScript and lightweight-charts, with a terminal-style look and a command line (`JKH GP`, `WL`, `HELP`).
 
 ### The three engines
@@ -66,12 +68,19 @@ The repository includes the tests that check whether the signals work: a mirror-
 - Entering at a plan's buy zone and exiting at its stop or first target did no better than the same stop and target on random days. With about 2.6% round-trip cost the average trade lost about 2.3%.
 - Each pattern's explanation in the app shows this measured track record next to the pattern.
 
+A later study (`factor_study.py`, 42 stocks, 14 years, after costs) looked for what does help:
+
+- The only combination that held up in both halves of the history was a stock in an **uptrend** (close above its 50-day average, which is above its 200-day), **within 10% of its 52-week high**, and in the **top 40% by 120-day return**. It beat the average uptrending stock by roughly 1.5 to 3.5 points over 40 to 90 sessions. It was chosen after looking at the data, so it is *tested, not proven*; the journal keeps checking it on new data.
+- Entry style (resting limit, next open, waiting for a bounce) made no difference, and the engines' BUY calls were no better than WATCH (Classic BUYs sat a median 21% below the 52-week high, still falling).
+- Staying out of weak markets did not improve results, and candlestick patterns pooled showed no edge (they are hidden by default).
+
 Use the tool to study charts and keep a consistent checklist, not as a source of trades. The studies are rerunnable (reports go to `backend/data/backtests/`):
 
 ```
 python -m cse_advisor.pattern_study       # does a pattern predict anything?
 python -m cse_advisor.backtest --calls    # record every call with its plan
 python -m cse_advisor.plan_study          # is the entry / exit plan sound?
+python -m cse_advisor.factor_study        # which stocks, entries and exits add return after costs?
 ```
 
 ## Run it
@@ -100,6 +109,14 @@ The app listens on this PC only (no login). Do not expose it to a network you do
 4. Restart the app and test with `python -m cse_advisor.telegram_bot --test`.
 
 You get an evening digest, alerts for signal changes and announcements, and commands such as `/watchlist` and `/report JKH`. The bot only obeys your chat id.
+
+## More screens
+
+- **SCR (F5), candidates:** the ranking above for all liquid stocks (median daily turnover of at least LKR 2M), with a `+ADD` button for stocks not on your watchlist. First run reads every ordinary share once (about 15 minutes), then only the liquid ones each evening.
+- **JRN (F6), journal:** every BUY and WATCH call with its plan, scored after 5, 20, 40 and 60 sessions with fees, next to the back-test numbers. Needs a few months and roughly 100 scored calls per group before it means anything.
+- **Positions, "Consider trimming":** information only. It lists bearish patterns that the tests found to fall more often than comparable days, and a close below the 50-day average. The HOLD / TRIM / SELL review is unchanged.
+- **Market banner** on the watchlist: ASPI against its 100- and 200-day averages and market breadth. A description, not a signal; no engine uses it.
+- **Backups:** each evening the database is copied to `backend/data/backups/` (newest 14 kept). `install_autostart.ps1` starts the app when you log in to Windows.
 
 ## Data and limits
 

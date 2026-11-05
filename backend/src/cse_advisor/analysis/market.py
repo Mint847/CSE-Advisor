@@ -68,3 +68,26 @@ def market_regime(md: pd.DataFrame) -> dict[str, Any]:
     regime = "risk_on" if score >= 60 else "risk_off" if score <= 40 else "neutral"
     return {"score": round(score, 1), "regime": regime, "detail": "; ".join(factors), "factors": factors,
             "aspi": last, "aspi_chg20_pct": round(chg20 * 100, 2)}
+
+
+def regime_banner(md: pd.DataFrame, breadth: float | None = None) -> dict[str, Any]:
+    """A plain description of the market for the banner: ASPI against its 100- and 200-day averages and, when the SCR ranking
+    exists, the share of liquid stocks above their own 50-day average. Display only: the 14-year study found that staying out
+    of weak markets did not improve results, so nothing in the engines uses this."""
+    if md is None or md.empty or md["aspi"].dropna().shape[0] < 200:
+        return {"state": "unknown", "text": "Not enough ASPI history for a market read.", "facts": []}
+    a = md["aspi"].dropna()
+    last = float(a.iloc[-1])
+    m100, m200 = float(a.rolling(100).mean().iloc[-1]), float(a.rolling(200).mean().iloc[-1])
+    above200, above100 = last > m200, last > m100
+    facts = [f"ASPI {last:,.0f} is {abs(last / m200 - 1) * 100:.1f}% {'above' if above200 else 'below'} its 200-day average",
+             f"{abs(last / m100 - 1) * 100:.1f}% {'above' if above100 else 'below'} its 100-day average"]
+    if breadth is not None:
+        facts.append(f"{breadth * 100:.0f}% of liquid stocks are above their 50-day average")
+    strong = above200 and (breadth is None or breadth >= 0.6)
+    weak = (not above200) and (breadth is None or breadth <= 0.4)
+    state = "risk_on" if strong else "risk_off" if weak else "mixed"
+    label = {"risk_on": "Risk-on", "risk_off": "Risk-off", "mixed": "Mixed"}[state]
+    return {"state": state, "label": label, "facts": facts, "aspi": last, "above200": above200, "above100": above100, "breadth": breadth,
+            "text": f"{label}: " + "; ".join(facts) + ".",
+            "note": "Description only. In the 14-year test, staying out of weak markets did not improve results, so no engine uses this."}

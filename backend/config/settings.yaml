@@ -60,6 +60,15 @@ intraday:                         # 1m / 5m / 15m / 1H / 4H charts (engines run 
   analysis_bars: 1500             # the engines look at the most recent N completed bars
   live_refresh_seconds: 60        # re-read today's cse.lk trades at most this often while a chart is open
 
+screener:                         # SCR: daily ranking of all liquid CSE stocks (shown only; never changes a verdict)
+  enabled: true
+  min_median_turnover_lkr: 2000000   # 60-session median daily turnover; thinner stocks are left out
+  universe_refresh_days: 14       # how often the full list is re-checked for liquidity (~15 min of TradingView requests)
+  bars: 400                       # daily bars fetched per stock each evening
+
+backup:
+  keep: 14                        # nightly copies of the database kept in data/backups
+
 smc:                              # SMC engine (order blocks, premium/discount, FVG, sweeps)
   buy_score: 55                   # minimum SMC score for a BUY
   swing_len: 3                    # a daily swing high/low must beat this many bars on each side

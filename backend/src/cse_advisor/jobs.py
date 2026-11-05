@@ -108,10 +108,20 @@ def run_eod(notify: bool = True, only: list[str] | None = None) -> dict[str, Any
         except Exception as exc:
             log.warning("ASPI intraday top-up: %s", exc)
         intraday._CACHE.clear()
+        # forward-test journal: write down tonight's calls (kept as made), score older ones
+        try:
+            from . import journal
+            out["journal"] = journal.record_day(out["analysed"])
+        except Exception as exc:
+            log.warning("journal failed: %s", exc)
         out["alerts"] = build_alerts(syms, prev, out["new_announcements"], out.get("figures"))
         if notify:
             from . import telegram_bot
             telegram_bot.send_digest(syms, out["alerts"])
+        try:
+            out["backup"] = backup_db()
+        except Exception as exc:
+            log.warning("database backup failed: %s", exc)
     except Exception as exc:
         log.exception("EOD job failed")
         out["ok"], out["message"] = False, str(exc)
@@ -125,7 +135,36 @@ def run_eod(notify: bool = True, only: list[str] | None = None) -> dict[str, Any
             s.add(JobRun(job="eod", run_date=last_trading_day(), ok=out["ok"] and not out["errors"],
                          message=str({k: v for k, v in out.items() if k in ("message", "errors", "analysed")})[:2000]))
         _lock.release()
+    if out.get("ok"):
+        try:
+            from . import screener
+            screener.start_background()      # tonight's ranking of all liquid stocks (separate thread: it takes minutes)
+        except Exception as exc:
+            log.warning("screener start failed: %s", exc)
     return out
+
+
+def backup_db() -> dict[str, Any]:
+    """Nightly copy of the SQLite database to data/backups/ (SQLite's online backup, safe while the app runs); keeps the newest N."""
+    import sqlite3
+    from .config import DATA_DIR, settings
+    from .db import engine
+    if engine.dialect.name != "sqlite" or not engine.url.database:
+        return {"skipped": "not a sqlite database"}
+    dest_dir = DATA_DIR / "backups"
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    dest = dest_dir / f"cse_advisor_{last_trading_day().isoformat()}.db"
+    src, dst = sqlite3.connect(engine.url.database), sqlite3.connect(dest)
+    try:
+        src.backup(dst)
+    finally:
+        dst.close()
+        src.close()
+    keep = int((settings().get("backup") or {}).get("keep", 14))
+    old = sorted(dest_dir.glob("cse_advisor_*.db"))[:-keep] if keep > 0 else []
+    for f in old:
+        f.unlink(missing_ok=True)
+    return {"file": dest.name, "kept": min(len(list(dest_dir.glob('cse_advisor_*.db'))), keep)}
 
 
 def _today_volume_at_price(sym: str) -> dict[str, Any] | None:
@@ -191,7 +230,7 @@ def build_alerts(syms: list[str], prev: dict[str, dict[str, Any]], new_anns: lis
                                "text": f"[SMC] {p['verdict_smc']} → {a.verdict_smc} (SMC score {a.score_smc or 0:.0f})"})
             old_ids = p["pattern_ids"] if p else set()
             for pat in a.patterns:
-                if pat.get("category") not in ("level", "smc") and pat["priority_tier"] == "high" and pat["id"] not in old_ids and pat["context"].get("age_bars", 99) <= 2:
+                if pat.get("category") not in ("level", "smc", "candlestick") and pat["priority_tier"] == "high" and pat["id"] not in old_ids and pat["context"].get("age_bars", 99) <= 2:
                     alerts.append({"symbol": sym, "kind": "new_pattern",
                                    "text": f"New high-priority pattern: {pat['name']} ({pat['direction']}, {pat['status']})"})
             # results just read from a new statement PDF
@@ -204,6 +243,16 @@ def build_alerts(syms: list[str], prev: dict[str, dict[str, Any]], new_anns: lis
                                            + (f" ({y:+.0f}% YoY)" if y is not None else "") + (f", EPS {lr['eps']:.2f}" if lr.get("eps") is not None else "")})
             pos = s.scalar(select(Position).where(Position.symbol == sym, Position.closed.is_(False)))
             if pos:
+                try:
+                    from . import portfolio
+                    from .engine import load_adjusted
+                    adj, _ = load_adjusted(s, sym)
+                    cl = adj["close"]
+                    te = portfolio.trend_exit(cl.to_numpy()[-2:], cl.ewm(span=50, adjust=False, min_periods=50).mean().to_numpy()[-2:])
+                    for w in portfolio.exit_warnings([pt for pt in a.patterns if pt["id"] not in old_ids], te if te and te["crossed_today"] else None):
+                        alerts.append({"symbol": sym, "kind": "position", "text": "Consider trimming: " + w["text"]})
+                except Exception as exc:
+                    log.warning("exit warnings %s: %s", sym, exc)
                 for tag, eng_rec in engine_recs(a.recommendation):
                     rv = (eng_rec or {}).get("position_review") or {}
                     if rv.get("action") in ("SELL", "TRIM"):
@@ -225,6 +274,11 @@ def startup_catch_up() -> None:
     fundamentals_catch_up()
     catalysts_catch_up()
     intraday_catch_up()
+    try:
+        from . import screener
+        screener.catch_up()
+    except Exception as exc:
+        log.warning("screener catch-up failed: %s", exc)
 
 
 def history_catch_up(force: bool = False) -> dict[str, Any]:

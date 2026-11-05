@@ -246,6 +246,34 @@ class Position(Base):
     notes: Mapped[str | None] = mapped_column(Text)
 
 
+class ScreenerRun(Base):
+    """One evening's ranking of the liquid CSE stocks (screener.py): the rows, and how they were made."""
+    __tablename__ = "screener_runs"
+    date: Mapped[date] = mapped_column(Date, primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    rows: Mapped[list[dict[str, Any]]] = mapped_column(JSON)
+    meta: Mapped[dict[str, Any]] = mapped_column(JSON)
+
+
+class JournalEntry(Base):
+    """Forward-test journal: one engine's call on one evening, scored later by what the price actually did.
+    Recorded for every BUY and WATCH call with a plan, never edited afterwards except for `outcome`."""
+    __tablename__ = "journal"
+    __table_args__ = (UniqueConstraint("symbol", "date", "engine"),)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    symbol: Mapped[str] = mapped_column(String(20), index=True)
+    date: Mapped[date] = mapped_column(Date, index=True)                   # the session the call was made after
+    engine: Mapped[str] = mapped_column(String(10))                        # original | analyst | smc
+    verdict: Mapped[str] = mapped_column(String(10))
+    setup: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    triggered: Mapped[bool] = mapped_column(Boolean, default=False)
+    close: Mapped[float] = mapped_column(Float)
+    plan: Mapped[dict[str, Any]] = mapped_column(JSON)                     # zl, zh, ideal, trigger, stop, t1, t2, rr
+    rule: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)   # trend / near-high / relative-strength flags that day
+    outcome: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    scored_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
 class Preference(Base):
     """Key/value user preferences (pattern display choices, layer toggles...)."""
     __tablename__ = "preferences"

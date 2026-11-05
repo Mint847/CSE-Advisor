@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api, fmt, ticker, type WatchItem } from '../api'
 import { AgreeBadge, ErrorBox, Sparkline, Spinner, VerdictBadge } from '../components/ui'
+import RegimeBanner from '../components/RegimeBanner'
 import { useLive } from '../useLive'
 
 const ORDER: Record<string, number> = { BUY: 0, SELL: 1, TRIM: 2, HOLD: 3, WATCH: 4, AVOID: 5 }
@@ -84,6 +85,7 @@ export default function Watchlist() {
 
   return (
     <div className="mx-auto max-w-[1700px] px-3 py-3">
+      <RegimeBanner />
       <section className="card">
         <div className="panel-title flex-wrap">
           <h1 className="flex-1">WL · Watchlist monitor <span className="font-normal normal-case text-muted">{items?.length ?? 0} of ~20 · {open ? <span className="text-bull">market open, live prices</span> : 'market closed'}</span></h1>

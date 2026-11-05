@@ -22,13 +22,15 @@ export const FUNCTIONS: { code: string; text: string; global?: boolean }[] = [
   { code: 'WL', text: 'Watchlist monitor', global: true },
   { code: 'PORT', text: 'Positions (portfolio)', global: true },
   { code: 'MKT', text: 'Market (ASPI, breadth); also WEI', global: true },
+  { code: 'SCR', text: 'Candidates: ranking of all liquid CSE stocks', global: true },
+  { code: 'JRN', text: 'Forward-test journal: calls scored by what happened', global: true },
   { code: 'SET', text: 'Settings & jobs', global: true },
   { code: 'ADD', text: 'Add a stock: ADD JKH', global: true },
   { code: 'HELP', text: 'Commands and keys', global: true },
 ]
 const TAB_OF: Record<string, string> = { GP: 'rec', CMP: 'cmp', SMC: 'smc', DES: 'des', LIQ: 'liq', CN: 'cn', CAT: 'cn', CACS: 'cacs', PAT: 'rec' }
 const TF_OF: Record<string, string> = { '1M': '1m', '5M': '5m', '15M': '15m', '1H': '1h', '4H': '4h', '1D': '1D', '1W': '1W' }
-const GLOBAL_ROUTE: Record<string, string> = { WL: '/', PORT: '/positions', MKT: '/market', WEI: '/market', SET: '/settings' }
+const GLOBAL_ROUTE: Record<string, string> = { WL: '/', PORT: '/positions', MKT: '/market', WEI: '/market', SCR: '/screener', JRN: '/journal', SET: '/settings' }
 
 interface Props { onHelp: () => void; inputRef: React.RefObject<HTMLInputElement | null> }
 

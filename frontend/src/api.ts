@@ -203,7 +203,26 @@ export interface Fundamentals {
 }
 export interface FundDetail { report_id?: number; title?: string; url?: string; column?: string | null; evidence?: Record<string, string>; checks?: string[]; comparative?: boolean; confirmed?: boolean; nav_per_share?: number | null }
 export interface AnnouncementRow { id: number; date: string | null; title: string; body: string | null; category: string | null; sentiment: number | null; materiality: number | null }
-export interface PositionRow { id: number; symbol: string; entry_date: string; entry_price: number; quantity: number; stop: number | null; target: number | null; closed: boolean; exit_date: string | null; exit_price: number | null; notes: string | null; price: number | null; review: PositionReview | null; verdict: Verdict | null; review_analyst?: PositionReview | null; verdict_analyst?: Verdict | null; review_smc?: PositionReview | null; verdict_smc?: Verdict | null }
+export interface PositionRow { id: number; symbol: string; entry_date: string; entry_price: number; quantity: number; stop: number | null; target: number | null; closed: boolean; exit_date: string | null; exit_price: number | null; notes: string | null; price: number | null; review: PositionReview | null; verdict: Verdict | null; review_analyst?: PositionReview | null; verdict_analyst?: Verdict | null; review_smc?: PositionReview | null; verdict_smc?: Verdict | null; warnings?: ExitWarning[] }
+export interface ExitWarning { kind: 'pattern' | 'trend'; id: string | null; title: string; text: string; crossed_today?: boolean }
+export interface ScreenerRow {
+  symbol: string; name: string; close: number | null; chg1d: number | null; ret20: number | null; ret60: number | null; ret120: number | null
+  rs120: number | null; dist52: number | null; ext20: number | null; trendup: boolean; above50: boolean; turn: number | null; rs_rank: number | null
+  qualifies: boolean; hits: number; missing: string[]; reason: string; on_watchlist: boolean
+}
+export interface ScreenerData {
+  run: { date: string; created_at: string; rows: ScreenerRow[]; meta: { rule: string; tested: string; checked: number; failed: string[]; liquid: number; qualifying: number
+    min_median_turnover_lkr: number; aspi_ret120: number | null; breadth_above50: number | null; last_bar: string; full_recheck: boolean; seconds: number } } | null
+  progress: { running: boolean; done: number; total: number; phase: string }
+  enabled: boolean
+}
+export interface JournalStats { group: string; calls: number; entered: number; n20: number; mean20: number | null; win20: number | null; n60: number; mean60: number | null; win60: number | null
+  plan_n: number; target_first: number | null; stop_first: number | null; plan_mean_net: number | null; reference: { n: number; plan_target_first: number; plan_stop_first: number; mean_net: number } | null }
+export interface JournalRow { id: number; symbol: string; date: string; engine: 'original' | 'analyst' | 'smc'; verdict: Verdict; setup: string | null; triggered: boolean; close: number
+  plan: { zl: number; zh: number; ideal: number; stop: number; t1: number | null }; rule_ok: boolean | null
+  outcome: { entered: boolean; entry_px: number | null; r5?: number | null; r20?: number | null; r40?: number | null; r60?: number | null; plan?: string; plan_net?: number } | null }
+export interface JournalData { total: number; scored: number; since: string | null; groups: JournalStats[]; recent: JournalRow[] }
+export interface Regime { state: 'risk_on' | 'risk_off' | 'mixed' | 'unknown'; label?: string; text: string; facts: string[]; note?: string; breadth?: number | null }
 export interface CatalogEntry { name: string; tier: number; enabled: boolean; base_reliability: number; category: string; type: string; engine?: Engine }
 
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
@@ -242,6 +261,10 @@ export const api = {
   telegramTest: () => req<{ ok: boolean }>('/api/telegram/test', { method: 'POST' }),
   market: () => req<MarketData>('/api/market'),
   positions: () => req<PositionRow[]>('/api/positions'),
+  screener: () => req<ScreenerData>('/api/screener'),
+  runScreener: (full = false) => req<{ started: boolean; message?: string }>(`/api/screener/run${full ? '?full=true' : ''}`, { method: 'POST' }),
+  journal: () => req<JournalData>('/api/journal'),
+  regime: () => req<Regime>('/api/regime'),
   addPosition: (p: Partial<PositionRow>) => req('/api/positions', { method: 'POST', body: JSON.stringify(p) }),
   closePosition: (id: number, exit_date: string, exit_price: number) => req(`/api/positions/${id}/close`, { method: 'POST', body: JSON.stringify({ exit_date, exit_price }) }),
   deletePosition: (id: number) => req(`/api/positions/${id}`, { method: 'DELETE' }),

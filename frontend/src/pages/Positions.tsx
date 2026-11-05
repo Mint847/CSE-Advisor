@@ -71,6 +71,19 @@ export default function Positions() {
           <button className="btn btn-primary">Add</button>
         </form>
       </Section>
+      {open.some(p => (p.warnings?.length ?? 0) > 0) && (
+        <Section title="Consider trimming: worth a look (information, not a sell signal)">
+          <ul className="space-y-2 text-[12px]">
+            {open.filter(p => (p.warnings?.length ?? 0) > 0).flatMap(p => p.warnings!.map(w => (
+              <li key={`${p.id}-${w.id}`} className="flex gap-2">
+                <Link className="w-14 shrink-0 font-semibold text-amber" to={`/stock/${p.symbol}`}>{ticker(p.symbol)}</Link>
+                <span><b className="text-fg">{w.title}.</b> <span className="text-muted">{w.text}</span></span>
+              </li>
+            )))}
+          </ul>
+          <p className="mt-2 text-[11px] text-muted">Only bearish patterns that the 14-year study found to fall more often than comparable days are listed, plus a close below the 50-day average. The HOLD / TRIM / SELL columns below are unchanged.</p>
+        </Section>
+      )}
       <Section title={`Open (${open.length})`}>
         {!rows ? <Spinner /> : open.length === 0 ? <p className="text-sm text-muted">No open positions.</p> : (
           <div className="overflow-x-auto">

@@ -2,8 +2,10 @@ import { useEffect, useRef, useState } from 'react'
 import { NavLink, Route, Routes, useNavigate } from 'react-router-dom'
 import { api } from './api'
 import CommandLine, { FUNCTIONS } from './components/CommandLine'
+import Journal from './pages/Journal'
 import Market from './pages/Market'
 import Positions from './pages/Positions'
+import Screener from './pages/Screener'
 import Settings from './pages/Settings'
 import StockDetail from './pages/StockDetail'
 import Watchlist from './pages/Watchlist'
@@ -13,6 +15,8 @@ const FKEYS: { key: string; label: string; to?: string; help?: boolean }[] = [
   { key: 'F2', label: 'WL', to: '/' },
   { key: 'F3', label: 'PORT', to: '/positions' },
   { key: 'F4', label: 'MKT', to: '/market' },
+  { key: 'F5', label: 'SCR', to: '/screener' },
+  { key: 'F6', label: 'JRN', to: '/journal' },
   { key: 'F8', label: 'SET', to: '/settings' },
 ]
 
@@ -115,7 +119,7 @@ export default function App() {
               </button>
             ) : (
               <NavLink key={k.key} to={k.to!} end={k.to === '/'} className={link}>
-                <span className="bg-menu px-1 text-white">{k.key}</span>{k.label === 'WL' ? 'WATCHLIST' : k.label === 'PORT' ? 'POSITIONS' : k.label === 'MKT' ? 'MARKET' : 'SETTINGS'}
+                <span className="bg-menu px-1 text-white">{k.key}</span>{({ WL: 'WATCHLIST', PORT: 'POSITIONS', MKT: 'MARKET', SCR: 'CANDIDATES', JRN: 'JOURNAL' } as Record<string, string>)[k.label] ?? 'SETTINGS'}
               </NavLink>
             ))}
             <span className="ml-auto hidden shrink-0 pl-3 text-[11px] text-muted md:inline">type <b className="text-yellow">/</b> for the command line · <b className="text-yellow">HELP &lt;GO&gt;</b></span>
@@ -128,6 +132,8 @@ export default function App() {
           <Route path="/stock/:symbol" element={<StockDetail />} />
           <Route path="/positions" element={<Positions />} />
           <Route path="/market" element={<Market />} />
+          <Route path="/screener" element={<Screener />} />
+          <Route path="/journal" element={<Journal />} />
           <Route path="/settings" element={<Settings />} />
         </Routes>
       </main>

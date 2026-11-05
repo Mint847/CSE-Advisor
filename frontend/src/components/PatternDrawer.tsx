@@ -237,7 +237,9 @@ export default function PatternDrawer(p: Props) {
               <div className="space-y-2 border border-line bg-panel p-2">
                 <div><div className="label mb-1">Category</div><div className="flex flex-wrap gap-1">
                   {CATEGORIES.map(c => <button key={c} className="btn !py-0.5" aria-pressed={prefs.categories.includes(c)} onClick={() => toggleIn('categories', c)}>{CATEGORY_LABEL[c]}</button>)}
-                </div></div>
+                </div>
+                {!prefs.categories.includes('candlestick') && <p className="mt-1 text-[11px] text-muted">Candlestick patterns are off by default: over 14 years they showed no edge beyond the stock's trend (pooled +0.2 points, not significant). Switch Candles on to see them; the engines' scores are unchanged either way.</p>}
+                </div>
                 <div><div className="label mb-1">Direction</div><div className="flex flex-wrap gap-1">
                   {['bullish', 'bearish', 'neutral'].map(d => <button key={d} className="btn !py-0.5" aria-pressed={prefs.directions.includes(d)} onClick={() => toggleIn('directions', d)}>{DIR_ICON[d]} {d}</button>)}
                 </div></div>

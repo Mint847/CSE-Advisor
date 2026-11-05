@@ -64,3 +64,49 @@ def summarize(positions: list[dict[str, Any]], capital: float | None, fee_pct: f
         out.update(capital=capital, invested_pct_of_capital=round(100 * cost_open / capital, 1),
                    risk_to_stops_pct_of_capital=round(100 * at_risk / capital, 2), cash_estimate=round(capital - cost_open + real, 2))
     return out
+
+
+# ---------------------------------------------------------------------------------------- exit warnings (text only)
+WARN_AGE_BARS = 10          # a bearish pattern confirmed this recently is still news
+WARN_LABELS = ("edge", "weak")
+
+
+def trend_exit(close: Any, ema50: Any) -> dict[str, Any] | None:
+    """Close vs the 50-day average for a held stock. `close` / `ema50` are the two newest values of each (oldest first)."""
+    try:
+        c0, c1, e0, e1 = float(close[-2]), float(close[-1]), float(ema50[-2]), float(ema50[-1])
+    except (TypeError, ValueError, IndexError):
+        return None
+    if not all(v == v for v in (c0, c1, e0, e1)):
+        return None
+    return {"close": c1, "ema50": e1, "below": c1 < e1, "crossed_today": c1 < e1 and c0 >= e0}
+
+
+def exit_warnings(patterns: list[dict[str, Any]], trend: dict[str, Any] | None) -> list[dict[str, Any]]:
+    """'Consider trimming' notes for a stock you hold. They are information only: the HOLD / TRIM / SELL review is untouched.
+
+    Two sources, both with measured evidence rather than a feeling:
+      * a bearish chart pattern, confirmed in the last WARN_AGE_BARS sessions, whose type the 14-year study found to have
+        an edge or a weak edge in the bearish direction (descending triangle, hidden bearish divergence, ...);
+      * the close is below the 50-day average, the usual trend exit (shown with the plain fact; the study found no exit rule
+        that clearly improved returns, so this is a prompt to look, not a signal).
+    """
+    from .analysis import track_record
+    out: list[dict[str, Any]] = []
+    for p in patterns or []:
+        if p.get("direction") != "bearish" or p.get("category") in ("level", "smc", "candlestick", "liquidity"):
+            continue
+        if p.get("status") != "confirmed" or (p.get("context") or {}).get("age_bars", 99) > WARN_AGE_BARS:
+            continue
+        rec = track_record.lookup(p["type"], "bearish")
+        if not rec or rec["label"] not in WARN_LABELS:
+            continue
+        out.append({"kind": "pattern", "id": p.get("id"), "title": p.get("name", p["type"]),
+                    "text": f"{p.get('name', p['type'])} (bearish, confirmed {(p.get('context') or {}).get('age_bars', 0)} sessions ago). "
+                            + track_record.sentence(rec, "bearish")})
+    if trend and trend.get("below"):
+        out.append({"kind": "trend", "id": "below_ema50", "title": "Closed below the 50-day average", "crossed_today": bool(trend.get("crossed_today")),
+                    "text": f"The close ({trend['close']:.2f}) is below the 50-day average ({trend['ema50']:.2f})"
+                            + (", for the first time today" if trend.get("crossed_today") else "")
+                            + ". Many trend followers treat this as the point to review a holding; in the back-tests no exit rule clearly beat holding, so use it as a prompt to look."})
+    return out

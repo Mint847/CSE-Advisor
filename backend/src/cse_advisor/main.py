@@ -22,7 +22,7 @@ from sqlalchemy import select
 
 from .strategy.recommend import plan_summary, split_engines
 from . import engine as eng
-from . import ingest, jobs, telegram_bot
+from . import ingest, jobs, journal, portfolio, screener, telegram_bot
 from .config import FRONTEND_DIST, pattern_catalog, settings
 from .cse_client import CDN
 from .db import (
@@ -539,6 +539,35 @@ def market() -> dict[str, Any]:
                           "movers": live.refresh_movers()})
 
 
+@app.get("/api/regime")
+def regime() -> dict[str, Any]:
+    """Market banner: ASPI vs its 100 / 200-day averages and breadth (from the SCR ranking). Description only."""
+    from .analysis.market import regime_banner
+    with SessionLocal() as s:
+        md = eng.load_market(s)
+    run = screener.latest()
+    return eng._jsonable(regime_banner(md, (run or {}).get("meta", {}).get("breadth_above50")))
+
+
+@app.get("/api/screener")
+def screener_view() -> dict[str, Any]:
+    return eng._jsonable({"run": screener.latest(), "progress": dict(screener.progress), "enabled": screener.cfg().get("enabled", True)})
+
+
+@app.post("/api/screener/run")
+def screener_run(full: bool = False) -> dict[str, Any]:
+    if screener.progress["running"]:
+        return {"started": False, "message": "already running"}
+    threading.Thread(target=screener.run, kwargs={"force_universe": full}, daemon=True, name="screener").start()
+    return {"started": True}
+
+
+@app.get("/api/journal")
+def journal_view() -> dict[str, Any]:
+    with SessionLocal() as s:
+        return eng._jsonable(journal.summary(s))
+
+
 class PositionIn(BaseModel):
     symbol: str
     entry_date: date
@@ -580,6 +609,18 @@ def telegram_test() -> dict[str, Any]:
     return {"ok": True}
 
 
+def _exit_warnings(s, symbol: str, a: Analysis | None) -> list[dict[str, Any]]:
+    """'Consider trimming' notes for a held stock (information only; see portfolio.exit_warnings)."""
+    try:
+        adj, _ = eng.load_adjusted(s, symbol)
+        cl = adj["close"]
+        te = portfolio.trend_exit(cl.to_numpy()[-2:], cl.ewm(span=50, adjust=False, min_periods=50).mean().to_numpy()[-2:])
+        return portfolio.exit_warnings(a.patterns if a else [], te)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("exit warnings %s: %s", symbol, exc)
+        return []
+
+
 def _positions() -> list[dict[str, Any]]:
     with SessionLocal() as s:
         out = []
@@ -593,7 +634,8 @@ def _positions() -> list[dict[str, Any]]:
                         "review_analyst": (ra or {}).get("position_review"),
                         "review_smc": ((a.recommendation or {}).get("smc") or {}).get("position_review") if a else None,
                         "verdict": a.verdict if a else None, "verdict_analyst": a.verdict_analyst if a else None,
-                        "verdict_smc": a.verdict_smc if a else None})
+                        "verdict_smc": a.verdict_smc if a else None,
+                        "warnings": [] if p.closed else _exit_warnings(s, p.symbol, a)})
         return eng._jsonable(out)
 
 

@@ -17,14 +17,18 @@ export interface StockPrefs {
   preset: string | null
   chartStyle: ChartStyle                   // candlesticks or a close-price line
   engines: EngineMask                      // whose drawings are shown: Classic, Levels, SMC
+  v?: number                               // preference version: 2 = candlestick patterns off by default
 }
 export const CATEGORIES = ['chart_pattern', 'liquidity', 'divergence', 'candlestick']
+/** Candlestick patterns tested at no edge over 14 years (pooled excess +0.2 pts, t < 1), so they start switched off. */
+export const DEFAULT_CATEGORIES = ['chart_pattern', 'liquidity', 'divergence']
+const PREFS_VERSION = 2
 export const CATEGORY_LABEL: Record<string, string> = { chart_pattern: 'Chart', liquidity: 'Liquidity', divergence: 'Divergence', candlestick: 'Candles' }
 
 export const DEFAULT_PREFS: StockPrefs = {
-  mode: 'top5', categories: CATEGORIES, directions: ['bullish', 'bearish', 'neutral'],
+  mode: 'top5', categories: DEFAULT_CATEGORIES, directions: ['bullish', 'bearish', 'neutral'],
   statuses: ['forming', 'confirmed', 'failed'], maxAge: 90, overrides: {}, levelOverrides: {}, layers: DEFAULT_LAYERS,
-  planEngine: 'both', preset: 'both', chartStyle: 'candles', engines: ALL_ENGINES,
+  planEngine: 'both', preset: 'both', chartStyle: 'candles', engines: ALL_ENGINES, v: PREFS_VERSION,
 }
 
 const OFF = Object.fromEntries(Object.keys(DEFAULT_LAYERS).map(k => [k, false])) as unknown as Layers
@@ -82,6 +86,13 @@ export function useStockPrefs(symbol: string) {
 }
 
 function merge(def: StockPrefs | null, own: StockPrefs | null): StockPrefs {
+  const m = mergeRaw(def, own)
+  // preferences saved before version 2 had candlestick patterns on: switch them off once (the drawer can turn them back on)
+  const ver = own?.v ?? def?.v ?? 1
+  return ver < PREFS_VERSION ? { ...m, v: PREFS_VERSION, categories: m.categories.filter(c => c !== 'candlestick') } : m
+}
+
+function mergeRaw(def: StockPrefs | null, own: StockPrefs | null): StockPrefs {
   return { ...DEFAULT_PREFS, ...(def ?? {}), ...(own ?? {}),
     levelOverrides: { ...(own?.levelOverrides ?? {}) },
     engines: { ...ALL_ENGINES, ...(def?.engines ?? {}), ...(own?.engines ?? {}) },
