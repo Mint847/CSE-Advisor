@@ -11,7 +11,7 @@ from sqlalchemy import select
 from .strategy.recommend import engine_recs
 from . import ingest, intraday
 from .cse_client import now_local
-from .db import Analysis, Announcement, JobRun, Position, SessionLocal
+from .db import Analysis, Announcement, JobRun, SessionLocal
 from .engine import analyze_symbol
 
 log = logging.getLogger(__name__)
@@ -68,6 +68,13 @@ def run_eod(notify: bool = True, only: list[str] | None = None) -> dict[str, Any
                 out["headlines"] = news_feeds.fetch(s, syms)
         except Exception as exc:
             log.warning("headlines failed: %s", exc)
+        out["headline_reader"] = read_headlines(syms)        # Claude when switched on; the keyword tone otherwise
+        try:
+            from . import macro
+            with SessionLocal.begin() as s:
+                out["world"] = macro.top_up(s)
+        except Exception as exc:
+            log.warning("world series failed: %s", exc)
         prev = _previous_snapshot(syms)
         for sym in syms:
             try:
@@ -114,10 +121,17 @@ def run_eod(notify: bool = True, only: list[str] | None = None) -> dict[str, Any
             out["journal"] = journal.record_day(out["analysed"])
         except Exception as exc:
             log.warning("journal failed: %s", exc)
-        out["alerts"] = build_alerts(syms, prev, out["new_announcements"], out.get("figures"))
+        # alerts and the digest are for the Telegram owner's stocks (one bot, one chat); the analysis above covers everyone's
+        from . import accounts
+        with SessionLocal() as s:
+            owner = accounts.telegram_owner(s)
+            mine = accounts.user_symbols(s, owner)
+            owner_wl = accounts.watchlist_symbols(s, owner)
+        own = [x for x in syms if x in mine]
+        out["alerts"] = build_alerts(own, prev, [x for x in out["new_announcements"] if x["symbol"] in mine], out.get("figures"), owner)
         if notify:
             from . import telegram_bot
-            telegram_bot.send_digest(syms, out["alerts"])
+            telegram_bot.send_digest([x for x in own if x in owner_wl] + [x for x in own if x not in owner_wl], out["alerts"])
         try:
             out["backup"] = backup_db()
         except Exception as exc:
@@ -209,7 +223,12 @@ def _previous_snapshot(syms: list[str]) -> dict[str, dict[str, Any]]:
 
 
 def build_alerts(syms: list[str], prev: dict[str, dict[str, Any]], new_anns: list[dict[str, Any]],
-                 figures: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+                 figures: dict[str, Any] | None = None, user_id: str | None = None) -> list[dict[str, Any]]:
+    """Alerts for one account's stocks (the Telegram owner's): signal changes of the shared analysis, new patterns and
+    results, and this account's position reviews."""
+    from . import accounts
+    from .db import LOCAL_UID
+    uid = user_id or LOCAL_UID
     alerts: list[dict[str, Any]] = []
     with SessionLocal() as s:
         for sym in syms:
@@ -241,7 +260,7 @@ def build_alerts(syms: list[str], prev: dict[str, dict[str, Any]], new_anns: lis
                     alerts.append({"symbol": sym, "kind": "results",
                                    "text": f"New results, quarter to {lr['period_end']}: profit LKR {lr['net_profit'] / 1e6:,.0f}M"
                                            + (f" ({y:+.0f}% YoY)" if y is not None else "") + (f", EPS {lr['eps']:.2f}" if lr.get("eps") is not None else "")})
-            pos = s.scalar(select(Position).where(Position.symbol == sym, Position.closed.is_(False)))
+            pos = accounts.open_position(s, uid, sym)
             if pos:
                 try:
                     from . import portfolio
@@ -253,7 +272,7 @@ def build_alerts(syms: list[str], prev: dict[str, dict[str, Any]], new_anns: lis
                         alerts.append({"symbol": sym, "kind": "position", "text": "Consider trimming: " + w["text"]})
                 except Exception as exc:
                     log.warning("exit warnings %s: %s", sym, exc)
-                for tag, eng_rec in engine_recs(a.recommendation):
+                for tag, eng_rec in engine_recs(accounts.effective(s, uid, a)["recommendation"]):
                     rv = (eng_rec or {}).get("position_review") or {}
                     if rv.get("action") in ("SELL", "TRIM"):
                         alerts.append({"symbol": sym, "kind": "position", "text": f"[{tag}] Position: {rv['action']} because " + "; ".join(rv.get("reasons", []))})
@@ -274,11 +293,40 @@ def startup_catch_up() -> None:
     fundamentals_catch_up()
     catalysts_catch_up()
     intraday_catch_up()
+    world_catch_up()
     try:
         from . import screener
         screener.catch_up()
     except Exception as exc:
         log.warning("screener catch-up failed: %s", exc)
+
+
+def read_headlines(syms: list[str]) -> dict[str, Any]:
+    """Claude reads the new headlines (news_llm.py) when switched on; never fails the job."""
+    try:
+        from . import news_llm
+        with SessionLocal.begin() as s:
+            return news_llm.classify_pending(s, syms)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("headline reader failed: %s", exc)
+        return {"error": str(exc)[:200]}
+
+
+def world_catch_up() -> dict[str, Any]:
+    """World series (Brent, Nasdaq-100, ...): the full history once, and the macro study once so the MKT page can show
+    each series' measured link to the ASPI."""
+    out: dict[str, Any] = {}
+    try:
+        from . import macro
+        with SessionLocal.begin() as s:
+            out["series"] = macro.top_up(s)
+        if not macro.LINKS_FILE.exists():
+            from . import macro_study
+            macro_study.main()
+            out["study"] = "written"
+    except Exception as exc:  # noqa: BLE001
+        log.warning("world catch-up failed: %s", exc)
+    return out
 
 
 def history_catch_up(force: bool = False) -> dict[str, Any]:
@@ -337,8 +385,8 @@ def catalysts_catch_up() -> dict[str, Any]:
         from . import news_feeds
         with SessionLocal() as s:
             syms = ingest.watchlist_symbols(s)
-        with SessionLocal.begin() as s:
-            out["headlines"] = news_feeds.fetch(s, syms)
+        out["headlines"] = news_feeds.fetch(None, syms, google=False)     # the Google searches run with the evening job
+        out["headline_reader"] = read_headlines(syms)
         for sym in syms:
             with SessionLocal.begin() as s:
                 r = ingest.enrich_announcements(s, sym)

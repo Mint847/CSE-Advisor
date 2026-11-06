@@ -28,7 +28,7 @@ from .analysis.model import score_patterns, tkey
 from .analysis.news import news_score
 from .analysis.pivots import zigzag
 from .analysis.trend import trend_state
-from .db import Analysis, Announcement, CorporateAction, Fundamental, MarketDaily, Position, PriceDaily, Security
+from .db import Analysis, Announcement, CorporateAction, Fundamental, MarketDaily, PriceDaily, Security
 from .strategy.analyst import recommend_analyst
 from .strategy.recommend import agreement, recommend_original
 from .strategy.smc import _cfg as smc_cfg, recommend_smc
@@ -113,7 +113,9 @@ def _row(o: Any) -> dict[str, Any]:
 
 
 def analyze_symbol(s: Session, symbol: str, save: bool = True, intraday_vap: dict[str, Any] | None = None,
-                   asof: Any = None) -> dict[str, Any] | None:
+                   asof: Any = None, position: dict[str, Any] | None = None) -> dict[str, Any] | None:
+    """The evening analysis of one stock. The saved (shared) analysis never includes anyone's position; with
+    `position` (and save=False) the engines also review that holding (accounts.refresh_review)."""
     sec = s.get(Security, symbol)
     adj, actions = load_adjusted(s, symbol)
     if asof is not None:   # replay: only data up to and including `asof`
@@ -122,7 +124,13 @@ def analyze_symbol(s: Session, symbol: str, save: bool = True, intraday_vap: dic
     if sec is None or len(adj) < MIN_BARS:
         log.warning("%s: not enough history (%d bars)", symbol, len(adj))
         return None
-    return analyze_frame(s, sec, adj, actions, save=save and asof is None, intraday_vap=intraday_vap)
+    saving = save and asof is None and position is None
+    out = analyze_frame(s, sec, adj, actions, save=saving, intraday_vap=intraday_vap, position=position)
+    if saving:
+        from .accounts import refresh_reviews_for_symbol
+        s.flush()
+        refresh_reviews_for_symbol(s, symbol)   # each holder's HOLD / TRIM / SELL from the same data
+    return out
 
 
 def analyze_frame(s: Session | None, sec: Any, adj: pd.DataFrame, actions: list[dict[str, Any]], save: bool = False,
@@ -217,12 +225,9 @@ def analyze_frame(s: Session | None, sec: Any, adj: pd.DataFrame, actions: list[
     if anns is None:
         anns = [{"id": a.id, "title": a.title, "date": a.date, "category": a.category, "sentiment": a.sentiment,
                  "materiality": a.materiality, "event": a.event} for a in s.scalars(select(Announcement).where(Announcement.symbol == symbol))] if s is not None else []
-        # matched business headlines count lightly (materiality 1, half their keyword tone) and never flag
+        # headlines about the company count lightly (materiality 1, half their tone) and never flag
         if s is not None:
-            from .db import Headline
-            anns = anns + [{"id": h.id, "title": h.title, "date": h.published, "category": "headline", "sentiment": (h.tone or 0) * 0.5,
-                            "materiality": 1} for h in s.scalars(select(Headline).where(Headline.published.is_not(None)))
-                           if symbol in (h.symbols or [])]
+            anns = anns + headline_items(s, sec, df.index[-1])
     asof_dt = datetime.combine(df.index[-1].date(), datetime.min.time())
     recent_anns = [a for a in anns if a.get("date") and a["date"] <= asof_dt + pd.Timedelta(days=1)]
     news = news_score(recent_anns, asof_dt)
@@ -233,9 +238,7 @@ def analyze_frame(s: Session | None, sec: Any, adj: pd.DataFrame, actions: list[
         market = market_regime(md[md.index <= df.index[-1]] if not md.empty else md)
 
     prev_o = prev_a = prev_s = None
-    if s is not None and position is None and not intraday:
-        pos = s.scalar(select(Position).where(Position.symbol == symbol, Position.closed.is_(False)).order_by(Position.entry_date.desc()))
-        position = _row(pos) if pos else None
+    if s is not None and not intraday:
         prev = s.scalar(select(Analysis).where(Analysis.symbol == symbol, Analysis.date < df.index[-1].date()).order_by(Analysis.date.desc()))
         if prev:
             prev_o = {"verdict": prev.verdict, "score": prev.score, "pattern_ids": [p["id"] for p in prev.patterns]}
@@ -303,6 +306,26 @@ def analyze_frame(s: Session | None, sec: Any, adj: pd.DataFrame, actions: list[
         row.created_at = datetime.utcnow()
         s.add(row)
     return result
+
+
+def headline_items(s: Session, sec: Any, asof: Any, days: int = 180) -> list[dict[str, Any]]:
+    """News headlines as light announcements for the news factor: Claude's per-company tone when it has read the
+    headline (only when the company is its subject), else the keyword tone when the company is the subject; the same
+    story from several outlets counts once."""
+    from .db import Headline
+    from .news_feeds import matchers, stock_reading
+    since = datetime.combine(pd.Timestamp(asof).date(), datetime.min.time()) - pd.Timedelta(days=days)
+    pats = matchers([(sec.symbol, sec.name)])
+    out, seen = [], set()
+    for h in s.scalars(select(Headline).where(Headline.published.is_not(None), Headline.published >= since).order_by(Headline.published)):
+        if sec.symbol not in (h.symbols or []) and not (h.llm or {}).get("companies"):
+            continue
+        v = stock_reading(h, sec.symbol, pats)
+        if v is None or (h.cluster or h.id) in seen:
+            continue
+        seen.add(h.cluster or h.id)
+        out.append({"id": h.id, "title": h.title, "date": h.published, "category": "headline", "sentiment": v * 0.5, "materiality": 1})
+    return out
 
 
 def bar_words(obj: Any) -> Any:

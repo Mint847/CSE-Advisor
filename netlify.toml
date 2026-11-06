@@ -1,0 +1,41 @@
+# Netlify serves the web pages (the built React app) and forwards /api to the backend, which runs on your own PC and
+# is reached through a public tunnel (README, "Use it from any device"). Netlify cannot run the Python backend itself.
+
+[build]
+  base = "frontend"
+  command = "npm run build"
+  publish = "dist"
+
+[build.environment]
+  NODE_VERSION = "22"
+
+# 1. The API goes to the backend. EDIT THIS LINE: put your tunnel address here (for example https://my-pc.tail1234.ts.net).
+[[redirects]]
+  from = "/api/*"
+  to = "https://YOUR-PC.YOUR-TAILNET.ts.net/api/:splat"
+  status = 200
+  force = true
+
+# 2. Firebase's sign-in helper pages run on this site's own domain (needed for Safari and home-screen apps).
+[[redirects]]
+  from = "/__/*"
+  to = "https://stock-suggest.firebaseapp.com/__/:splat"
+  status = 200
+  force = true
+
+# 3. Everything else is the single-page app.
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
+
+# Same protections the backend adds when it serves the pages itself (main.py security_headers): framing only by this
+# site, no Cross-Origin-Opener-Policy (it breaks the Google pop-up), and a content policy listing what sign-in loads.
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Content-Type-Options = "nosniff"
+    X-Frame-Options = "SAMEORIGIN"
+    Referrer-Policy = "strict-origin-when-cross-origin"
+    Permissions-Policy = "camera=(), microphone=(), geolocation=(), payment=()"
+    Content-Security-Policy = "default-src 'self'; script-src 'self' https://apis.google.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data:; connect-src 'self' https://*.googleapis.com https://apis.google.com; frame-src 'self' https://stock-suggest.firebaseapp.com https://apis.google.com https://accounts.google.com; frame-ancestors 'self'; object-src 'none'; base-uri 'self'; form-action 'self'"

@@ -3,6 +3,9 @@
 Setup: create a bot with @BotFather, put TELEGRAM_TOKEN in backend/.env, send your
 bot any message, then run `python -m cse_advisor.telegram_bot --whoami` and put the
 printed id in TELEGRAM_CHAT_ID. The bot only obeys that chat.
+
+With sign-in on there can be many accounts but there is one bot and one chat: it reports on the Telegram owner's
+watchlist and positions (accounts.telegram_owner; the account that claimed the pre-sign-in data, or set in SET).
 """
 from __future__ import annotations
 
@@ -19,6 +22,7 @@ from sqlalchemy import select
 
 from .strategy.recommend import split_engines
 from .config import env, settings
+from . import accounts
 from .db import Analysis, Position, Security, SessionLocal
 
 log = logging.getLogger(__name__)
@@ -82,9 +86,14 @@ def _f(x: Any) -> str:
 
 
 # ---------------------------------------------------------------- report text
+def _owner() -> str:
+    with SessionLocal() as s:
+        return accounts.telegram_owner(s)
+
+
 def report_text(symbol: str, compact: bool = True) -> str:
     with SessionLocal() as s:
-        a = s.scalar(select(Analysis).where(Analysis.symbol == symbol).order_by(Analysis.date.desc()))
+        a = accounts.latest_view(s, accounts.telegram_owner(s), symbol)
         sec = s.get(Security, symbol)
     if not a:
         return f"No analysis yet for {html.escape(symbol)}."
@@ -151,7 +160,8 @@ def send_digest(symbols: list[str], alerts: list[dict[str, Any]]) -> None:
         head += "\n\n🔔 <b>Alerts</b>\n" + "\n".join(f"• <b>{html.escape(x['symbol'].split('.')[0])}</b>: {html.escape(x['text'])}" for x in alerts)
     order = {"BUY": 0, "SELL": 1, "TRIM": 2, "HOLD": 3, "WATCH": 4, "AVOID": 5}
     with SessionLocal() as s:
-        latest = [(sym, s.scalar(select(Analysis).where(Analysis.symbol == sym).order_by(Analysis.date.desc()))) for sym in symbols]
+        owner = accounts.telegram_owner(s)
+        latest = [(sym, accounts.latest_view(s, owner, sym)) for sym in symbols]
     soon = []
     for sym, a in latest:
         for e in (((a.recommendation or {}).get("catalysts") or {}).get("next") or []) if a else []:
@@ -173,7 +183,7 @@ def chart_png(symbol: str, bars: int = 120) -> bytes | None:
     from .engine import load_adjusted
     with SessionLocal() as s:
         df, _ = load_adjusted(s, symbol)
-        a = s.scalar(select(Analysis).where(Analysis.symbol == symbol).order_by(Analysis.date.desc()))
+        a = accounts.latest_view(s, accounts.telegram_owner(s), symbol)
     if df.empty:
         return None
     df = df.tail(bars).rename(columns=str.capitalize)
@@ -232,8 +242,9 @@ def handle_command(text: str, chat: str) -> None:
             send_text(HELP, chat)
         elif cmd == "/watchlist":
             with SessionLocal() as s:
-                syms = ingest.watchlist_symbols(s)
-                rows = [s.scalar(select(Analysis).where(Analysis.symbol == x).order_by(Analysis.date.desc())) for x in syms]
+                owner = accounts.telegram_owner(s)
+                syms = ingest.watchlist_symbols(s, owner)
+                rows = [accounts.latest_view(s, owner, x) for x in syms]
             send_text("\n".join(f"<b>{x.split('.')[0]}</b> {_f(split_engines(a.recommendation)[0].get('close'))} · CLS {VERDICT_ICON.get(a.verdict, '')}{a.verdict} {a.score:.0f}"
                                 f" · LVL {VERDICT_ICON.get(a.verdict_analyst or '', '')}{a.verdict_analyst or '–'} {a.score_analyst or 0:.0f}"
                                 f" · SMC {VERDICT_ICON.get(a.verdict_smc or '', '')}{a.verdict_smc or '–'} {a.score_smc or 0:.0f}"
@@ -253,15 +264,15 @@ def handle_command(text: str, chat: str) -> None:
             z = "\n".join(f"{'🟦' if x['kind'] == 'support' else '🟧'} {x['low']:.2f}–{x['high']:.2f} ({x['touches']} touches)" for x in reversed(a.levels["zones"]))
             send_text(f"<b>{sym}</b> levels (close {_f(split_engines(a.recommendation)[0].get('close'))})\n{z}", chat)
         elif cmd == "/add" and arg:
-            sym = ingest.add_to_watchlist(arg)
+            sym = ingest.add_to_watchlist(arg, _owner())
             jobs.run_eod(notify=False, only=[sym])
             send_text(f"Added {sym}.\n\n" + report_text(sym), chat)
         elif cmd == "/remove" and arg:
-            ingest.remove_from_watchlist(ingest.resolve_symbol(arg))
+            ingest.remove_from_watchlist(ingest.resolve_symbol(arg), _owner())
             send_text(f"Removed {arg.upper()}.", chat)
         elif cmd == "/positions":
             with SessionLocal() as s:
-                ps = s.scalars(select(Position).where(Position.closed.is_(False))).all()
+                ps = s.scalars(select(Position).where(Position.user_id == accounts.telegram_owner(s), Position.closed.is_(False))).all()
             send_text("\n".join(f"<b>{p.symbol}</b> {p.quantity:,} @ {_f(p.entry_price)} · stop {_f(p.stop)}" for p in ps) or "No open positions.", chat)
         elif cmd == "/run":
             send_text("Running analysis…", chat)

@@ -33,11 +33,38 @@ class Security(Base):
     updated_at: Mapped[datetime | None] = mapped_column(DateTime)
 
 
+LOCAL_UID = "local"          # owner of the data when sign-in is off (and of everything made before sign-in existed)
+
+
 class WatchlistItem(Base):
+    """One stock on one account's watchlist."""
     __tablename__ = "watchlist"
-    symbol: Mapped[str] = mapped_column(ForeignKey("securities.symbol"), primary_key=True)
+    __table_args__ = (UniqueConstraint("user_id", "symbol"),)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[str] = mapped_column(String(128), index=True, default=LOCAL_UID)
+    symbol: Mapped[str] = mapped_column(ForeignKey("securities.symbol"), index=True)
     added_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     notes: Mapped[str | None] = mapped_column(Text)
+
+
+class WatchlistGroup(Base):
+    """A named list ("Watchlist 1", "Swing ideas"...) on an account's home page. The `watchlist` table above is the set
+    of stocks the account tracks (what the evening job fetches and analyses); every tracked stock is on at least one
+    list, and a stock can be on several."""
+    __tablename__ = "watchlist_groups"
+    __table_args__ = (UniqueConstraint("user_id", "name"),)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[str] = mapped_column(String(128), index=True, default=LOCAL_UID)
+    name: Mapped[str] = mapped_column(String(40))
+    sort_order: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class WatchlistGroupItem(Base):
+    __tablename__ = "watchlist_group_items"
+    group_id: Mapped[int] = mapped_column(ForeignKey("watchlist_groups.id", ondelete="CASCADE"), primary_key=True)
+    symbol: Mapped[str] = mapped_column(String(20), primary_key=True)
+    added_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 
 class PriceDaily(Base):
@@ -137,17 +164,33 @@ class Announcement(Base):
 
 
 class Headline(Base):
-    """Business-news headlines from free RSS feeds (EconomyNext, Daily Mirror), matched to watchlist stocks."""
+    """News headlines from free RSS feeds (Sri Lankan papers, CBSL, Google News searches), matched to tracked stocks.
+    Only the title, link, date and the feed's short summary are kept; articles are linked, never copied."""
     __tablename__ = "headlines"
     id: Mapped[str] = mapped_column(String(40), primary_key=True)          # hash of the link
-    source: Mapped[str] = mapped_column(String(40))
+    source: Mapped[str] = mapped_column(String(40))                        # the feed (Daily FT, Google News...)
     title: Mapped[str] = mapped_column(String(400))
     link: Mapped[str] = mapped_column(String(600))
     published: Mapped[datetime | None] = mapped_column(DateTime, index=True)
     summary: Mapped[str | None] = mapped_column(Text, nullable=True)
-    symbols: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)  # matched watchlist symbols
+    symbols: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)  # stocks the headline is about (primary)
     tone: Mapped[float | None] = mapped_column(Float, nullable=True)        # keyword tone -1..1
     fetched_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    kind: Mapped[str | None] = mapped_column(String(10), nullable=True)     # company | macro | global
+    outlet: Mapped[str | None] = mapped_column(String(80), nullable=True)   # the publisher (for Google News items)
+    cluster: Mapped[str | None] = mapped_column(String(40), nullable=True, index=True)   # same story, several outlets
+    llm: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)  # Claude's reading (news_llm.py)
+
+
+class MacroDaily(Base):
+    """Daily closes of world series (Brent, Nasdaq-100, S&P 500, USD/LKR, gold, Nifty) from TradingView. Shown and
+    studied (macro_study.py); no engine score uses them."""
+    __tablename__ = "macro_daily"
+    __table_args__ = (UniqueConstraint("code", "date"),)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    code: Mapped[str] = mapped_column(String(12), index=True)                # brent | ndx | spx | usdlkr | gold | nifty
+    date: Mapped[date] = mapped_column(Date, index=True)                     # the series' own session date
+    close: Mapped[float] = mapped_column(Float)
 
 
 class FinancialReport(Base):
@@ -234,6 +277,7 @@ class Analysis(Base):
 class Position(Base):
     __tablename__ = "positions"
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[str] = mapped_column(String(128), index=True, default=LOCAL_UID)
     symbol: Mapped[str] = mapped_column(String(20), index=True)
     entry_date: Mapped[date] = mapped_column(Date)
     entry_price: Mapped[float] = mapped_column(Float)
@@ -272,13 +316,57 @@ class JournalEntry(Base):
     rule: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)   # trend / near-high / relative-strength flags that day
     outcome: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     scored_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # what was known that evening but not used by the engines (headline tone, world markets), so it can be tested later
+    context: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
 
 
 class Preference(Base):
-    """Key/value user preferences (pattern display choices, layer toggles...)."""
+    """Key/value app state shared by everyone (screener universe, corporate-action notices seen, Telegram owner...).
+    Each account's own display choices are in UserPref."""
     __tablename__ = "preferences"
     key: Mapped[str] = mapped_column(String(100), primary_key=True)
     value: Mapped[Any] = mapped_column(JSON)
+
+
+class UserPref(Base):
+    """One account's display preferences (pattern layers, catalog toggles...), key/value."""
+    __tablename__ = "user_prefs"
+    user_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    key: Mapped[str] = mapped_column(String(100), primary_key=True)
+    value: Mapped[Any] = mapped_column(JSON)
+
+
+class UserAccount(Base):
+    """An account's profile, created on its first sign-in and never overwritten with defaults (only empty fields are
+    filled). Sign-in itself (passwords, Google) lives in Firebase; nothing secret is stored here."""
+    __tablename__ = "users"
+    uid: Mapped[str] = mapped_column(String(128), primary_key=True)
+    email: Mapped[str] = mapped_column(String(320), default="")
+    first_name: Mapped[str] = mapped_column(String(100), default="")
+    last_name: Mapped[str] = mapped_column(String(100), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    last_updated: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    last_seen: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class PositionReview(Base):
+    """The engines' review of one account's open position in a stock (HOLD / TRIM / SELL, suggested stop), made from the
+    same evening's analysis. The shared Analysis row is position-free; this is the per-account layer on top of it."""
+    __tablename__ = "position_reviews"
+    __table_args__ = (UniqueConstraint("user_id", "symbol"),)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[str] = mapped_column(String(128), index=True)
+    symbol: Mapped[str] = mapped_column(String(20), index=True)
+    position_id: Mapped[int] = mapped_column(Integer)
+    date: Mapped[date] = mapped_column(Date)
+    verdict: Mapped[str] = mapped_column(String(10))
+    score: Mapped[float] = mapped_column(Float)
+    verdict_analyst: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    score_analyst: Mapped[float | None] = mapped_column(Float, nullable=True)
+    verdict_smc: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    score_smc: Mapped[float | None] = mapped_column(Float, nullable=True)
+    recommendation: Mapped[dict[str, Any]] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 
 class JobRun(Base):
@@ -291,7 +379,7 @@ class JobRun(Base):
     message: Mapped[str | None] = mapped_column(Text)
 
 
-engine = create_engine(database_url(), future=True)
+engine = create_engine(database_url(), future=True, connect_args={"timeout": 20} if database_url().startswith("sqlite") else {})   # wait up to 20 s for a lock
 
 
 @event.listens_for(engine, "connect")
@@ -307,9 +395,13 @@ SessionLocal = sessionmaker(bind=engine, expire_on_commit=False, future=True)
 
 
 def init_db() -> None:
+    _watchlist_per_user()
     Base.metadata.create_all(engine)
     _add_missing_columns()
     _intraday_unique_with_source()
+    _owner_for_old_rows()
+    _lists_for_old_watchlists()
+    _date_undated_headlines()
 
 
 def _add_missing_columns() -> None:
@@ -341,3 +433,61 @@ def _intraday_unique_with_source() -> None:
         cols = ", ".join(c.name for c in PriceIntraday.__table__.columns)
         conn.execute(text(f"INSERT INTO prices_intraday ({cols}) SELECT {cols} FROM prices_intraday_old"))
         conn.execute(text("DROP TABLE prices_intraday_old"))
+
+
+def _watchlist_per_user() -> None:
+    """Accounts (sign-in) made the watchlist per user: its key changed from the symbol to (user, symbol). SQLite cannot
+    change a primary key, so the old table is rebuilt once; its rows become the local user's."""
+    from sqlalchemy import inspect, text
+    insp = inspect(engine)
+    if not insp.has_table("watchlist") or "user_id" in {c["name"] for c in insp.get_columns("watchlist")}:
+        return
+    with engine.begin() as conn:
+        conn.execute(text("ALTER TABLE watchlist RENAME TO watchlist_old"))
+        WatchlistItem.__table__.create(conn)
+        conn.execute(text("INSERT INTO watchlist (user_id, symbol, added_at, notes) "
+                          "SELECT :uid, symbol, added_at, notes FROM watchlist_old ORDER BY added_at"), {"uid": LOCAL_UID})
+        conn.execute(text("DROP TABLE watchlist_old"))
+
+
+# display preferences the web app stores (prefs.ts): before accounts they were global, now each account has its own
+_USER_PREF_KEYS = ("catalog",)
+_USER_PREF_PREFIXES = ("stock:",)
+
+
+def _owner_for_old_rows() -> None:
+    """Rows made before accounts existed belong to the local user: positions get user_id 'local', and the web app's
+    display preferences are copied into the local user's preferences (once)."""
+    from sqlalchemy import text
+    with engine.begin() as conn:
+        conn.execute(text("UPDATE positions SET user_id = :uid WHERE user_id IS NULL"), {"uid": LOCAL_UID})
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_positions_user_id ON positions (user_id)"))
+        if engine.dialect.name != "sqlite" or conn.execute(text("SELECT 1 FROM preferences WHERE key = 'user_prefs_migrated'")).first():
+            return
+        for key, value in conn.execute(text("SELECT key, value FROM preferences")).all():
+            if key in _USER_PREF_KEYS or key.startswith(_USER_PREF_PREFIXES):
+                conn.execute(text("INSERT OR IGNORE INTO user_prefs (user_id, key, value) VALUES (:u, :k, :v)"),
+                             {"u": LOCAL_UID, "k": key, "v": value})
+        conn.execute(text("INSERT INTO preferences (key, value) VALUES ('user_prefs_migrated', 'true')"))
+
+
+def _lists_for_old_watchlists() -> None:
+    """Named lists were added after the watchlist: every account that tracks stocks but has no list yet gets
+    "Watchlist 1" holding those stocks (once; later accounts get theirs when they first open the home page)."""
+    from sqlalchemy import text
+    with engine.begin() as conn:
+        users = [r[0] for r in conn.execute(text(
+            "SELECT DISTINCT user_id FROM watchlist WHERE user_id NOT IN (SELECT user_id FROM watchlist_groups)")).all()]
+        for uid in users:
+            gid = conn.execute(text("INSERT INTO watchlist_groups (user_id, name, sort_order, created_at) "
+                                    "VALUES (:u, 'Watchlist 1', 0, CURRENT_TIMESTAMP)"), {"u": uid}).lastrowid
+            conn.execute(text("INSERT INTO watchlist_group_items (group_id, symbol, added_at) "
+                              "SELECT :g, symbol, added_at FROM watchlist WHERE user_id = :u"), {"g": gid, "u": uid})
+
+
+def _date_undated_headlines() -> None:
+    """Daily Mirror's feed dates items as '2026-11-05 12:00:00', which the first feed reader could not parse, so those
+    headlines were stored undated and never counted. Give them the time they were fetched (the feed shows only recent items)."""
+    from sqlalchemy import text
+    with engine.begin() as conn:
+        conn.execute(text("UPDATE headlines SET published = fetched_at WHERE published IS NULL"))

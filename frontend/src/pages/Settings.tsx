@@ -28,7 +28,13 @@ export default function Settings() {
   return (
     <div className="mx-auto max-w-[1700px] space-y-2 px-3 py-3">
       <h1 className="text-[14px] font-semibold uppercase tracking-wider text-amber">SET · Settings</h1>
-      <Section title="Jobs & integrations">
+      {st && !st.admin && (
+        <Section title="Jobs">
+          <p className="text-sm text-muted">The analysis runs every weekday after the close (15:30 Colombo time) for every stock on anyone's watchlist.
+            Jobs, Telegram and shared market data (sectors, statements, corporate actions) are managed by the app's administrator.</p>
+        </Section>
+      )}
+      {st?.admin && <Section title="Jobs & integrations">
         <div className="space-y-2 text-sm">
           <p className="flex flex-wrap items-center gap-2">Telegram: {st?.telegram ? <b className="text-bull">connected</b> : <span className="text-warn">not set up, so alerts and the evening digest go nowhere. Add TELEGRAM_TOKEN and TELEGRAM_CHAT_ID to backend/.env (README, "Telegram"), then restart.</span>}
             <button className="btn !py-0.5 text-xs" disabled={!st?.telegram} onClick={async () => { try { await api.telegramTest(); setTg('Test message sent: check Telegram.') } catch (e) { setTg(String((e as Error).message)) } }}>Send test message</button>
@@ -41,8 +47,8 @@ export default function Settings() {
             {st?.jobs.map((j, i) => <li key={i}>{new Date(j.at + 'Z').toLocaleString()}: {j.job} for {j.date} {j.ok ? '✓' : '✗'} <span className="opacity-70">{j.message?.slice(0, 140)}</span></li>)}
           </ul>
         </div>
-      </Section>
-      <Section title="Sectors (shown on the stock page and the market page; not scored)">
+      </Section>}
+      {st?.admin && <Section title="Sectors (shown on the stock page and the market page; not scored)">
         <p className="mb-2 text-[12px] text-muted">CSE's data doesn't say which S&amp;P/CSE sector a stock belongs to, so pick it here.{saved && <span className="ml-2 text-bull">Saved {saved}</span>}</p>
         <div className="grid gap-x-4 gap-y-1 sm:grid-cols-2 lg:grid-cols-3 [&>*]:min-w-0">
           {wl.map(w => (
@@ -55,7 +61,7 @@ export default function Settings() {
             </label>
           ))}
         </div>
-      </Section>
+      </Section>}
       <Section title="Pattern catalog">
         <p className="mb-3 text-sm text-muted">Turn pattern types off to hide them everywhere. Tier 1 = chart & liquidity patterns (most useful for swing trading), tier 2 = multi-candle, tier 3 = single-candle. Reliability numbers are starting priors until the CSE backtest replaces them.</p>
         <div className="grid gap-4 sm:grid-cols-2">

@@ -1,4 +1,5 @@
-// Typed client for the FastAPI backend.
+// Typed client for the FastAPI backend. Every call carries the signed-in user's ID token (when sign-in is on).
+import { authHeader } from './auth/session'
 
 export type Direction = 'bullish' | 'bearish' | 'neutral'
 export type Status = 'forming' | 'confirmed' | 'failed' | 'expired'
@@ -116,7 +117,11 @@ export interface Catalysts {
   corporate: { phase: string | null; notes: string[] }
 }
 export interface InsiderWindow { days: number; notices: number; buys: number; sells: number; net_value: number }
-export interface Headline { source: string; title: string; link: string; published: string | null; tone: number | null; symbols?: string[] }
+export interface Headline {
+  source: string; title: string; link: string; published: string | null; tone: number | null; symbols?: string[]
+  kind?: 'local' | 'company' | 'macro' | 'global'; read_by?: 'Claude' | 'keywords'; category?: string | null; theme?: string | null
+  sl_market_tone?: number | null; reason?: string | null; counted?: boolean
+}
 
 /* ---- Portfolio */
 export interface PortfolioFigures { cost: number; market_value?: number; unrealised_net?: number; unrealised_net_pct?: number; realised_net?: number; realised_net_pct?: number; stop?: number; pl_at_stop?: number; drop_to_stop_pct?: number }
@@ -222,23 +227,61 @@ export interface JournalRow { id: number; symbol: string; date: string; engine: 
   plan: { zl: number; zh: number; ideal: number; stop: number; t1: number | null }; rule_ok: boolean | null
   outcome: { entered: boolean; entry_px: number | null; r5?: number | null; r20?: number | null; r40?: number | null; r60?: number | null; plan?: string; plan_net?: number } | null }
 export interface JournalData { total: number; scored: number; since: string | null; groups: JournalStats[]; recent: JournalRow[] }
-export interface Regime { state: 'risk_on' | 'risk_off' | 'mixed' | 'unknown'; label?: string; text: string; facts: string[]; note?: string; breadth?: number | null }
+export interface WatchList { id: number; name: string; count: number }
+export interface ListsInfo { lists: WatchList[]; portfolio: number; max_lists: number }
+export interface AllStock {
+  symbol: string; name: string; price: number | null; change_pct: number | null; volume: number | null; turnover: number | null
+  trades: number | null; market_cap: number | null; traded: string | null
+  lists: number[]; held: boolean; candidate: { qualifies: boolean; hits: number; rs_rank: number | null } | null
+}
+export interface AllStocksData { lists: WatchList[]; count: number; rows: AllStock[] }
+export interface Overnight { notes: { series: string; text: string }[]; note: string }
+export interface Regime { state: 'risk_on' | 'risk_off' | 'mixed' | 'unknown'; label?: string; text: string; facts: string[]; note?: string; breadth?: number | null; overnight?: Overnight | null }
+export interface WorldSeries {
+  code: string; name: string; unit: string; last: number; date: string; chg1d: number | null; chg1w: number | null; chg1m: number | null
+  spark?: number[]; link: string | null; verdict: 'held' | 'one_half' | 'weak' | 'none' | null
+}
+export interface FeedState { checked: string; ok: boolean; items: number; last_ok: string | null; error: string | null }
+export interface World {
+  series: WorldSeries[]; overnight: Overnight | null; news: Headline[]
+  study: { date: string | null; period: string | null; events: Record<string, Record<string, number | string | null>> | null }
+  feeds: { feeds: Record<string, FeedState>; not_used: { name: string; note: string }[] }
+  reader: { enabled: boolean; model: string; usage: { date: string; headlines: number; input_tokens: number; output_tokens: number; calls: number; errors: number; total_input_tokens?: number; total_output_tokens?: number } | null }
+  news_tone: { n: number; read: number; tone: number | null; themes: Record<string, number> }
+}
 export interface CatalogEntry { name: string; tier: number; enabled: boolean; base_reliability: number; category: string; type: string; engine?: Engine }
 
+// writes still on their way to the server (preferences are saved in the background): signing out asks first
+let writesInFlight = 0
+export const hasUnsyncedChanges = () => writesInFlight > 0
+
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
-  const r = await fetch(path, { headers: { 'Content-Type': 'application/json' }, ...init })
-  if (!r.ok) {
-    let msg = `${r.status} ${r.statusText}`
-    try { const j = await r.json(); msg = j.detail ?? msg } catch { /* not json */ }
-    throw new Error(typeof msg === 'string' ? msg : JSON.stringify(msg))
+  const write = !!init?.method && init.method !== 'GET'
+  if (write) writesInFlight++
+  try {
+    const r = await fetch(path, { ...init, headers: { 'Content-Type': 'application/json', ...(await authHeader()), ...(init?.headers ?? {}) } })
+    if (!r.ok) {
+      let msg = `${r.status} ${r.statusText}`
+      try { const j = await r.json(); msg = j.detail ?? msg } catch { /* not json */ }
+      throw new Error(typeof msg === 'string' ? msg : JSON.stringify(msg))
+    }
+    return r.json() as Promise<T>
+  } finally {
+    if (write) writesInFlight--
   }
-  return r.json() as Promise<T>
 }
 
 export const api = {
-  watchlist: () => req<WatchItem[]>('/api/watchlist'),
-  addStock: (query: string) => req<{ symbol: string }>('/api/watchlist', { method: 'POST', body: JSON.stringify({ query }) }),
-  removeStock: (s: string) => req(`/api/watchlist/${s}`, { method: 'DELETE' }),
+  /** Every stock tracked; or one list (its id), or 'portfolio' (stocks with an open position). */
+  watchlist: (list?: number | 'portfolio') => req<WatchItem[]>(`/api/watchlist${list != null ? `?list=${list}` : ''}`),
+  addStock: (query: string, listId?: number) => req<{ symbol: string }>('/api/watchlist', { method: 'POST', body: JSON.stringify({ query, list_id: listId ?? null }) }),
+  /** Off one list (it stops being tracked when that was its last list), or off every list. */
+  removeStock: (s: string, listId?: number) => req<{ removed: string; untracked: boolean }>(`/api/watchlist/${s}${listId != null ? `?list=${listId}` : ''}`, { method: 'DELETE' }),
+  lists: () => req<ListsInfo>('/api/lists'),
+  createList: (name: string) => req<{ id: number; name: string }>('/api/lists', { method: 'POST', body: JSON.stringify({ name }) }),
+  renameList: (id: number, name: string) => req<{ id: number; name: string }>(`/api/lists/${id}`, { method: 'PUT', body: JSON.stringify({ name }) }),
+  deleteList: (id: number) => req<{ ok: boolean; untracked: string[] }>(`/api/lists/${id}`, { method: 'DELETE' }),
+  allStocks: () => req<AllStocksData>('/api/stocks/all'),
   candles: (s: string, tf: string, raw = false) => req<Candles>(`/api/stocks/${s}/candles?tf=${tf}${raw ? '&raw=true' : ''}`),
   corporateActions: (s: string) => req<CorpAction[]>(`/api/stocks/${s}/corporate-actions`),
   saveCorporateAction: (s: string, a: Partial<CorpAction>, id?: number) => req(`/api/stocks/${s}/corporate-actions${id ? '/' + id : ''}`, { method: id ? 'PUT' : 'POST', body: JSON.stringify(a) }),
@@ -265,6 +308,7 @@ export const api = {
   runScreener: (full = false) => req<{ started: boolean; message?: string }>(`/api/screener/run${full ? '?full=true' : ''}`, { method: 'POST' }),
   journal: () => req<JournalData>('/api/journal'),
   regime: () => req<Regime>('/api/regime'),
+  world: () => req<World>('/api/world'),
   addPosition: (p: Partial<PositionRow>) => req('/api/positions', { method: 'POST', body: JSON.stringify(p) }),
   closePosition: (id: number, exit_date: string, exit_price: number) => req(`/api/positions/${id}/close`, { method: 'POST', body: JSON.stringify({ exit_date, exit_price }) }),
   deletePosition: (id: number) => req(`/api/positions/${id}`, { method: 'DELETE' }),
@@ -272,7 +316,9 @@ export const api = {
   getPref: <T,>(k: string) => req<T | null>(`/api/prefs/${encodeURIComponent(k)}`),
   putPref: (k: string, v: unknown) => req(`/api/prefs/${encodeURIComponent(k)}`, { method: 'PUT', body: JSON.stringify(v) }),
   runEod: () => req('/api/jobs/eod', { method: 'POST' }),
-  status: () => req<{ market_open: boolean; telegram: boolean; live_updated: string | null; jobs: { job: string; date: string; ok: boolean; at: string; message: string }[]; settings: { capital: number; risk_pct: number; fees_pct: number; weights: Record<string, number> } }>('/api/status'),
+  status: () => req<{ market_open: boolean; telegram: boolean; admin: boolean; auth: boolean; live_updated: string | null; jobs: { job: string; date: string; ok: boolean; at: string; message: string | null }[]; settings: { capital: number; risk_pct: number; fees_pct: number; weights: Record<string, number> } }>('/api/status'),
+  claimLocal: () => req<{ ok: boolean; moved: Record<string, number> }>('/api/me/claim-local', { method: 'POST' }),
+  telegramOwner: () => req<{ ok: boolean }>('/api/me/telegram-owner', { method: 'POST' }),
 }
 
 export const fmt = (x: number | null | undefined, nd = 2) =>

@@ -72,6 +72,33 @@ def _rule_flags(s: Session, symbol: str) -> dict[str, Any] | None:
         return None
 
 
+_WORLD: dict[Any, dict[str, Any]] = {}
+
+
+def _context(s: Session, symbol: str, d: Any) -> dict[str, Any] | None:
+    """What was known that evening but used by no engine: the stock's headline tone (7 and 30 days, same story once) and
+    the world markets / world-news tone. Kept with the call so a later study can test whether it would have helped."""
+    try:
+        from datetime import timedelta
+        from .db import Security
+        from .engine import headline_items
+        sec = s.get(Security, symbol)
+        items = headline_items(s, sec, d, days=30) if sec else []
+        end = datetime.combine(d, datetime.min.time()) + timedelta(days=1)
+
+        def win(days: int) -> dict[str, Any]:
+            v = [i["sentiment"] * 2 for i in items if i["date"] and i["date"] >= end - timedelta(days=days + 1) and i["date"] < end]
+            return {"n": len(v), "tone": round(float(np.mean(v)), 3) if v else None}
+        if d not in _WORLD:
+            from . import macro
+            _WORLD.clear()
+            _WORLD[d] = macro.journal_context(s, d)
+        return {"headlines_7d": win(7), "headlines_30d": win(30), **_WORLD[d]}
+    except Exception as exc:  # noqa: BLE001 - the journal must never break the evening job
+        log.warning("journal context %s: %s", symbol, exc)
+        return None
+
+
 def record(s: Session, symbol: str, a: Analysis | None = None) -> int:
     """Write down the latest analysis's BUY / WATCH calls. An existing entry for that stock, date and engine is kept as it is."""
     a = a or s.scalar(select(Analysis).where(Analysis.symbol == symbol).order_by(Analysis.date.desc()))
@@ -79,6 +106,7 @@ def record(s: Session, symbol: str, a: Analysis | None = None) -> int:
         return 0
     made = 0
     flags: dict[str, Any] | None = None
+    ctx: dict[str, Any] | None = None
     for eng in ENGINES:
         e = (a.recommendation or {}).get(eng)
         plan = _plan(e) if e else None
@@ -87,9 +115,10 @@ def record(s: Session, symbol: str, a: Analysis | None = None) -> int:
         if s.scalar(select(JournalEntry.id).where(JournalEntry.symbol == symbol, JournalEntry.date == a.date, JournalEntry.engine == eng)):
             continue
         flags = flags if flags is not None else (_rule_flags(s, symbol) or {})
+        ctx = ctx if ctx is not None else (_context(s, symbol, a.date) or {})
         s.add(JournalEntry(symbol=symbol, date=a.date, engine=eng, verdict=e["verdict"], setup=(e["plan"].get("setup")),
                            triggered=bool(e["plan"].get("triggered")), close=float(e.get("close") or a.recommendation.get("close")),
-                           plan=plan, rule=flags or None))
+                           plan=plan, rule=flags or None, context=ctx or None))
         made += 1
     return made
 
@@ -170,8 +199,12 @@ def _stats(rows: list[JournalEntry]) -> dict[str, Any]:
     return d
 
 
-def summary(s: Session, limit: int = 60) -> dict[str, Any]:
-    rows = s.scalars(select(JournalEntry).order_by(JournalEntry.date.desc(), JournalEntry.symbol)).all()
+def summary(s: Session, limit: int = 60, symbols: set[str] | None = None) -> dict[str, Any]:
+    """Stats by engine and verdict; with `symbols`, only those stocks' calls (an account sees its own stocks)."""
+    q = select(JournalEntry).order_by(JournalEntry.date.desc(), JournalEntry.symbol)
+    if symbols is not None:
+        q = q.where(JournalEntry.symbol.in_(sorted(symbols)))
+    rows = s.scalars(q).all()
     groups: dict[str, list[JournalEntry]] = {}
     for r in rows:
         key = f"{r.engine} {'BUY' if r.verdict == 'BUY' else 'WATCH'}"
@@ -180,6 +213,11 @@ def summary(s: Session, limit: int = 60) -> dict[str, Any]:
             groups.setdefault("rule met (any engine)", []).append(r)
         elif (r.rule or {}).get("ok") is False:
             groups.setdefault("rule not met (any engine)", []).append(r)
+        t = (((r.context or {}).get("headlines_30d")) or {}).get("tone")       # news the engines barely weigh
+        if t is not None and t >= 0.1:
+            groups.setdefault("headlines positive, 30 days (any engine)", []).append(r)
+        elif t is not None and t <= -0.1:
+            groups.setdefault("headlines negative, 30 days (any engine)", []).append(r)
     by_group = [{"group": k, **_stats(v), "reference": REFERENCE.get(k)} for k, v in sorted(groups.items())]
     first = min((r.date for r in rows), default=None)
     return {"total": len(rows), "scored": sum(1 for r in rows if r.scored_at), "since": first.isoformat() if first else None, "groups": by_group,

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { ColorType, HistogramSeries, LineSeries, createChart } from 'lightweight-charts'
 import { api, fmt, ticker, type Headline, type MarketData, type Mover } from '../api'
+import WorldPanel from '../components/WorldPanel'
 import { Section, Spinner, Stat } from '../components/ui'
 
 const css = (k: string) => getComputedStyle(document.documentElement).getPropertyValue(k).trim()
@@ -135,22 +136,27 @@ export default function Market() {
         </div>
       </Section>
 
-      <Section title="Business headlines (EconomyNext, Daily Mirror)">
+      <WorldPanel />
+
+      <Section title="Business headlines (Sri Lankan papers and Google News)">
         {hl.length === 0 ? <p className="text-[12px] text-muted">No headlines fetched yet; they are fetched every few hours and each evening.</p> : (
           <ul className="max-h-[24rem] divide-y divide-line/60 overflow-y-auto scroll-thin">{hl.map(h => (
             <li key={h.link} className="flex flex-wrap items-start gap-x-2 py-1.5 text-[12px] sm:flex-nowrap">
-              <span className="w-28 shrink-0 text-[11px] text-muted num">{h.published?.slice(0, 16).replace('T', ' ')}<div>{h.source}</div></span>
-              <a className="min-w-0 flex-1 text-fg hover:text-amber hover:underline" href={h.link} target="_blank" rel="noreferrer">{h.title}</a>
+              <span className="w-28 shrink-0 text-[11px] text-muted num">{h.published?.slice(0, 16).replace('T', ' ')}<div className="truncate">{h.source}</div></span>
+              <span className="min-w-0 flex-1">
+                <a className="text-fg hover:text-amber hover:underline" href={h.link} target="_blank" rel="noreferrer">{h.title}</a>
+                {h.reason && <span className="block text-[11px] text-muted">{h.reason}</span>}
+              </span>
               {(h.symbols ?? []).map(s => <Link key={s} to={`/stock/${s}?tab=cn`} className="chip shrink-0 border border-amber/60 text-amber">{ticker(s)}</Link>)}
             </li>
           ))}</ul>
         )}
-        <p className="mt-1 text-[11px] text-muted">Titles and links only; read the article on the source site. A chip means the headline's title names one of your stocks.</p>
+        <p className="mt-1 text-[11px] text-muted">Titles and links only; read the article on the source site. A chip means the headline is about one of your stocks.</p>
       </Section>
 
       <Section title="What drives the market regime score">
         <ul className="list-disc space-y-1 pl-5 text-sm">{m.regime.factors.map(f => <li key={f}>{f}</li>)}</ul>
-        <p className="mt-2 text-xs text-muted">Turnover and breadth build up from the day you start running the app (CSE history gives ASPI closes only). On 5M–4H charts the Classic engine uses the ASPI on the same timeframe instead. CBSL policy rates, T-bill yields and LKR are planned for the macro module.</p>
+        <p className="mt-2 text-xs text-muted">Turnover and breadth build up from the day you start running the app (CSE history gives ASPI closes only). On 5M–4H charts the Classic engine uses the ASPI on the same timeframe instead. World markets (oil, US shares, USD/LKR) are shown above with their measured link to the ASPI; none is scored.</p>
       </Section>
     </div>
   )

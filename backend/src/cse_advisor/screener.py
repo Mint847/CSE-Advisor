@@ -104,7 +104,7 @@ def run(force_universe: bool = False) -> dict[str, Any]:
         min_turn = float(cfg().get("min_median_turnover_lkr", 2_000_000))
         with SessionLocal() as s:
             uni = s.get(Preference, "screener_universe")
-            watch = {w.symbol for w in s.scalars(select(WatchlistItem)).all()}
+            watch = set(s.scalars(select(WatchlistItem.symbol)).all())
         summary = client().trade_summary()
         names = {r["symbol"]: r.get("name") or r["symbol"] for r in summary}
         ordinary = [r["symbol"] for r in summary if r["symbol"].endswith(".N0000")]
@@ -155,13 +155,16 @@ def run(force_universe: bool = False) -> dict[str, Any]:
         _lock.release()
 
 
-def latest() -> dict[str, Any] | None:
+def latest(user_id: str | None = None) -> dict[str, Any] | None:
+    """Tonight's ranking; `on_watchlist` is for `user_id`'s watchlist (everyone's when None)."""
     with SessionLocal() as s:
         r = s.scalar(select(ScreenerRun).order_by(ScreenerRun.date.desc()))
         if not r:
             return None
-        with SessionLocal() as s2:
-            watch = {w.symbol for w in s2.scalars(select(WatchlistItem)).all()}
+        q = select(WatchlistItem.symbol)
+        if user_id is not None:
+            q = q.where(WatchlistItem.user_id == user_id)
+        watch = set(s.scalars(q).all())
         rows = [{**x, "on_watchlist": x["symbol"] in watch} for x in r.rows]
         return {"date": r.date.isoformat(), "created_at": r.created_at.isoformat(), "rows": rows, "meta": r.meta}
 

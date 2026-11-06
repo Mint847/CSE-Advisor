@@ -184,16 +184,22 @@ export default function CatalystsTab({ symbol }: { symbol: string }) {
       </Section>
 
       <Section title={`Headlines${c.headlines.n30 ? ` · ${c.headlines.n30} in 30 days` : ''}`}>
-        {c.headlines.items.length === 0 ? <p className="text-[12px] text-muted">No recent EconomyNext or Daily Mirror headline names this company.</p> : (
+        {c.headlines.items.length === 0 ? <p className="text-[12px] text-muted">No recent headline from the Sri Lankan papers or Google News names this company.</p> : (
           <ul className="divide-y divide-line/60">{c.headlines.items.map(h => (
-            <li key={h.link} className="flex items-start gap-2 py-1.5 text-[12px]">
-              <span className="w-28 shrink-0 text-[11px] text-muted num">{h.published?.slice(0, 10)}<div>{h.source}</div></span>
-              <a className="min-w-0 flex-1 text-fg hover:text-amber hover:underline" href={h.link} target="_blank" rel="noreferrer">{h.title}</a>
-              <span className={`w-12 shrink-0 text-right num ${tone(h.tone)}`} title="keyword tone of the headline">{(h.tone ?? 0) > 0 ? '+' : ''}{(h.tone ?? 0).toFixed(1)}</span>
+            <li key={h.link} className={`flex items-start gap-2 py-1.5 text-[12px] ${h.counted === false ? 'opacity-60' : ''}`}>
+              <span className="w-28 shrink-0 text-[11px] text-muted num">{h.published?.slice(0, 10)}<div className="truncate">{h.source}</div></span>
+              <span className="min-w-0 flex-1">
+                <a className="text-fg hover:text-amber hover:underline" href={h.link} target="_blank" rel="noreferrer">{h.title}</a>
+                {h.reason && <span className="block text-[11px] text-muted">{h.category ? `${h.category} · ` : ''}{h.reason}</span>}
+                {h.counted === false && <span className="block text-[11px] text-muted">mentions the company in passing: not counted</span>}
+              </span>
+              <span className={`w-14 shrink-0 text-right num ${tone(h.tone)}`} title={h.read_by === 'Claude' ? 'tone read by Claude' : 'keyword tone'}>
+                {(h.tone ?? 0) > 0 ? '+' : ''}{(h.tone ?? 0).toFixed(1)}<span className="block text-[10px] text-muted">{h.read_by === 'Claude' ? 'Claude' : 'keywords'}</span>
+              </span>
             </li>
           ))}</ul>
         )}
-        <p className="mt-1 text-[11px] text-muted">Matched by the full company name or ticker. The tone is a keyword guess, so headlines count only lightly and never raise a red flag.</p>
+        <p className="mt-1 text-[11px] text-muted">Only headlines about the company count (a passing mention does not), the same story from several outlets counts once, and the tone is read by Claude when switched on, else by keyword rules. Headlines count lightly and never raise a red flag.</p>
       </Section>
 
       <Section title="CSE announcements" right={<input className="input w-40 !py-0.5 text-[12px]" placeholder="search" value={q} onChange={e => setQ(e.target.value)} aria-label="Search announcements" />}>

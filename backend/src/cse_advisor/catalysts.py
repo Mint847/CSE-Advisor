@@ -19,7 +19,7 @@ from .analysis.events import results_due, risk_lines, upcoming
 from .analysis.news import event_text
 from .analysis.reactions import MIN_N, reaction, stats, xd_drop
 from .analysis.report_parser import period_from_title
-from .db import Analysis, Announcement, CorporateAction, FinancialReport, Fundamental, Headline
+from .db import Analysis, Announcement, CorporateAction, FinancialReport, Fundamental, Headline, Security
 
 MATERIAL = {"mna", "disposal", "investment", "rating", "rights_issue", "bonus_issue", "share_split", "buyback", "dilution",
             "management_exit", "red_flag", "suspension", "litigation", "non_compliance"}
@@ -113,12 +113,30 @@ def build(s: Session, symbol: str, closes: pd.Series, aspi: pd.Series | None, to
                         "checks": (f.get("detail") or {}).get("checks"), "url": (f.get("detail") or {}).get("url")})
 
     # ---- headlines
+    from .news_feeds import matchers, stock_reading
     cutoff = datetime.now() - timedelta(days=60)
-    hl = [h for h in s.scalars(select(Headline).where(Headline.published >= cutoff).order_by(Headline.published.desc())) if symbol in (h.symbols or [])]
-    h30 = [h for h in hl if h.published and h.published >= datetime.now() - timedelta(days=30)]
-    headlines = {"n30": len(h30), "tone30": round(sum(h.tone or 0 for h in h30) / len(h30), 2) if h30 else None,
-                 "items": [{"source": h.source, "title": h.title, "link": h.link, "published": h.published.isoformat(timespec="minutes") if h.published else None,
-                            "tone": h.tone} for h in hl[:15]]}
+    sec = s.get(Security, symbol)
+    pats = matchers([(symbol, sec.name if sec else symbol)])
+    hl, counted, seen = [], [], set()
+    for h in s.scalars(select(Headline).where(Headline.published >= cutoff).order_by(Headline.published.desc())):
+        llm_syms = {c.get("symbol") for c in (h.llm or {}).get("companies") or []}
+        if symbol not in (h.symbols or []) and symbol not in llm_syms:
+            continue
+        v = stock_reading(h, symbol, pats)
+        hl.append((h, v))
+        if v is not None and (h.cluster or h.id) not in seen:     # the same story from several outlets counts once
+            seen.add(h.cluster or h.id)
+            counted.append((h, v))
+    h30 = [(h, v) for h, v in counted if h.published and h.published >= datetime.now() - timedelta(days=30)]
+
+    def _item(h: Headline, v: float | None) -> dict[str, Any]:
+        llm = h.llm or {}
+        return {"source": h.outlet or h.source, "title": h.title, "link": h.link,
+                "published": h.published.isoformat(timespec="minutes") if h.published else None,
+                "tone": v if v is not None else h.tone, "counted": v is not None,
+                "read_by": "Claude" if llm.get("by") else "keywords", "reason": llm.get("reason"), "category": llm.get("category")}
+    headlines = {"n30": len(h30), "tone30": round(sum(v for _, v in h30) / len(h30), 2) if h30 else None,
+                 "items": [_item(h, v) for h, v in hl[:15]]}
 
     # ---- announcement list
     react = {e["aid"]: e.get("reaction") for e in events if e.get("aid")}
@@ -206,7 +224,7 @@ def scorecard(c: dict[str, Any], rec: dict[str, Any], fundamentals: dict[str, An
     if h["n30"]:
         t = h["tone30"] or 0
         add("Headlines (30 days)", f"{h['n30']} matched, average tone {t:+.2f}", 1 if t >= 0.3 else -1 if t <= -0.3 else 0,
-            "keyword tone of matched headlines; lightly weighted", 0)
+            "tone of headlines about the company (Claude when switched on, else keywords); shown, not counted", 0)
     # reaction history
     rs = next((x for x in c["reaction_stats"] if x["kind"] == "results"), None)
     if rs:

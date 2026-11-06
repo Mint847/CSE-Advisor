@@ -12,7 +12,7 @@ from sqlalchemy import select
 from .strategy.recommend import split_engines
 from .config import settings
 from .cse_client import client, ms_to_local, now_local
-from .db import Analysis, Position, SessionLocal
+from .db import SessionLocal
 
 log = logging.getLogger(__name__)
 
@@ -135,17 +135,18 @@ class LiveQuotes:
         if not telegram_bot.enabled():
             return
         today = str(now_local().date())
+        from . import accounts
         with SessionLocal() as s:
-            from .ingest import watchlist_symbols
-            for sym in watchlist_symbols(s):
+            owner = accounts.telegram_owner(s)            # Telegram has one chat: its owner's stocks
+            for sym in sorted(accounts.user_symbols(s, owner)):
                 q = self.quotes.get(sym)
-                a = s.scalar(select(Analysis).where(Analysis.symbol == sym).order_by(Analysis.date.desc()))
+                a = accounts.latest_view(s, owner, sym)
                 if not q or not a or q["time"] != today:
                     continue
                 price = q["close"]
                 ro, ra = split_engines(a.recommendation)
                 msgs = []
-                pos = s.scalar(select(Position).where(Position.symbol == sym, Position.closed.is_(False)))
+                pos = accounts.open_position(s, owner, sym)
                 if pos:
                     rv = ro.get("position_review") or {}
                     stop = rv.get("suggested_stop") or pos.stop

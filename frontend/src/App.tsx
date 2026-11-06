@@ -1,14 +1,18 @@
 import { useEffect, useRef, useState } from 'react'
-import { NavLink, Route, Routes, useNavigate } from 'react-router-dom'
+import { Navigate, NavLink, Route, Routes, useNavigate } from 'react-router-dom'
 import { api } from './api'
+import { afterSignIn } from './auth/rules'
+import { AccountMenu, VerifyBanner } from './components/Account'
 import CommandLine, { FUNCTIONS } from './components/CommandLine'
+import Account from './pages/Account'
 import Journal from './pages/Journal'
 import Market from './pages/Market'
 import Positions from './pages/Positions'
 import Screener from './pages/Screener'
 import Settings from './pages/Settings'
+import { AFTER_KEY } from './pages/SignIn'
 import StockDetail from './pages/StockDetail'
-import Watchlist from './pages/Watchlist'
+import Home from './pages/Home'
 
 const FKEYS: { key: string; label: string; to?: string; help?: boolean }[] = [
   { key: 'F1', label: 'HELP', help: true },
@@ -66,6 +70,13 @@ export default function App() {
   const [status, setStatus] = useState<{ open: boolean; eod: string | null; telegram: boolean } | null>(null)
   const clock = useClock()
 
+  // after signing in, open the page that was asked for while signed out
+  useEffect(() => {
+    let to: string | null = null
+    try { to = sessionStorage.getItem(AFTER_KEY); sessionStorage.removeItem(AFTER_KEY) } catch { /* */ }
+    if (to && afterSignIn(to) !== '/') nav(afterSignIn(to), { replace: true })
+  }, [nav])
+
   useEffect(() => {
     const load = () => api.status().then(s => {
       const eod = s.jobs.find(j => j.job === 'eod' && j.ok)
@@ -109,6 +120,7 @@ export default function App() {
           <div className="ml-auto flex shrink-0 items-center gap-3 text-[11px] num sm:ml-0">
             <span className={status?.open ? 'text-bull' : 'text-muted'}>{status?.open ? '● LIVE' : '○ CLOSED'}</span>
             <span className="text-fg">{clock} <span className="text-muted">COLOMBO</span></span>
+            <AccountMenu />
           </div>
         </div>
         <nav className="border-t border-line bg-panel" aria-label="Functions">
@@ -126,15 +138,18 @@ export default function App() {
           </div>
         </nav>
       </header>
+      <VerifyBanner />
       <main className="flex-1">
         <Routes>
-          <Route path="/" element={<Watchlist />} />
+          <Route path="/" element={<Home />} />
           <Route path="/stock/:symbol" element={<StockDetail />} />
           <Route path="/positions" element={<Positions />} />
           <Route path="/market" element={<Market />} />
           <Route path="/screener" element={<Screener />} />
           <Route path="/journal" element={<Journal />} />
           <Route path="/settings" element={<Settings />} />
+          <Route path="/account" element={<Account />} />
+          {['/login', '/signup', '/forgot'].map(p => <Route key={p} path={p} element={<Navigate to="/" replace />} />)}
         </Routes>
       </main>
       <footer className="border-t border-line bg-panel">

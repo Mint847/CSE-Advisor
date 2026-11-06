@@ -14,21 +14,23 @@ from typing import Any
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
-from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi import Depends, FastAPI, HTTPException, Query, Request
+from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from .strategy.recommend import plan_summary, split_engines
 from . import engine as eng
-from . import ingest, jobs, journal, portfolio, screener, telegram_bot
-from .config import FRONTEND_DIST, pattern_catalog, settings
+from . import accounts, auth, ingest, jobs, journal, portfolio, screener, telegram_bot
+from .auth import User, current_user, require_admin
+from .config import FRONTEND_DIST, env, pattern_catalog, settings
 from .cse_client import CDN
 from .db import (
     Analysis, Announcement, CorporateAction, FinancialReport, Fundamental, JobRun, MarketDaily, Position, Preference, PriceDaily,
     SessionLocal, Security, WatchlistItem, init_db,
 )
+from .db import LOCAL_UID
 from .live import live, market_open
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -57,58 +59,189 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(title="CSE Advisor", lifespan=lifespan)
 
+PUBLIC_API = {"/api/auth/config"}
+
+
+@app.middleware("http")
+async def auth_gate(request: Request, call_next):
+    """Every /api call needs a valid Firebase ID token when sign-in is on (except the public sign-in config). Checked
+    here once for all routes, so no route can forget it; the routes read the caller from Depends(current_user)."""
+    path = request.url.path
+    if path.startswith("/api/") and path not in PUBLIC_API:
+        try:
+            request.state.user = await asyncio.to_thread(current_user, request)
+        except HTTPException as exc:
+            return JSONResponse({"detail": exc.detail}, status_code=exc.status_code,
+                                headers={"WWW-Authenticate": "Bearer"} if exc.status_code == 401 else None)
+    response = await call_next(request)
+    if not path.startswith("/__/"):          # Firebase's own sign-in helper pages keep Firebase's headers
+        for k, v in security_headers().items():
+            response.headers.setdefault(k, v)
+    return response
+
+
+def security_headers() -> dict[str, str]:
+    """Headers that don't break sign-in: framing only by our own pages (the auth iframe), no COOP (it breaks the
+    Google pop-up), and a CSP listing exactly what Firebase sign-in loads."""
+    pid = auth.project_id()
+    fb = f" https://{pid}.firebaseapp.com" if pid else ""
+    emu = f" http://{auth.emulator_host()}" if auth.emulator_host() else ""     # local testing only (demo-* projects)
+    csp = ("default-src 'self'; script-src 'self' https://apis.google.com; style-src 'self' 'unsafe-inline'; "
+           "img-src 'self' data: blob: https:; font-src 'self' data:; "
+           f"connect-src 'self' https://*.googleapis.com https://apis.google.com{emu}; "
+           f"frame-src 'self'{fb} https://apis.google.com https://accounts.google.com{emu}; "
+           "frame-ancestors 'self'; object-src 'none'; base-uri 'self'; form-action 'self'")
+    return {"X-Content-Type-Options": "nosniff", "X-Frame-Options": "SAMEORIGIN", "Content-Security-Policy": csp,
+            "Referrer-Policy": "strict-origin-when-cross-origin",
+            "Permissions-Policy": "camera=(), microphone=(), geolocation=(), payment=()"}
+
 
 def _latest(s, symbol: str) -> Analysis | None:
     return s.scalar(select(Analysis).where(Analysis.symbol == symbol).order_by(Analysis.date.desc()))
 
 
-# ============================================================================ watchlist
-class AddReq(BaseModel):
-    query: str
+def _require_tracked(s, u: User, symbol: str) -> None:
+    """Refreshing a stock's data is for stocks you watch or hold (or the admin): it costs requests to cse.lk / TradingView."""
+    if not u.admin and symbol not in accounts.user_symbols(s, u.uid):
+        raise HTTPException(403, "Add the stock to your watchlist first.")
 
 
-@app.get("/api/watchlist")
-def get_watchlist() -> list[dict[str, Any]]:
-    out = []
-    with SessionLocal() as s:
-        for item in s.scalars(select(WatchlistItem).order_by(WatchlistItem.added_at)):
-            sec = s.get(Security, item.symbol)
-            a = _latest(s, item.symbol)
-            closes = s.scalars(select(PriceDaily.close).where(PriceDaily.symbol == item.symbol)
-                               .order_by(PriceDaily.date.desc()).limit(60)).all()[::-1]
-            q = live.quotes.get(item.symbol)
-            ro, ra = split_engines(a.recommendation if a else None)
-            rs = (a.recommendation or {}).get("smc") if a else None
-            agree = (a.recommendation or {}).get("agreement") if a else None
-            last = q["close"] if q else (closes[-1] if closes else None)
-            top = next((p for p in (a.patterns if a else []) if p["status"] in ("confirmed", "forming") and p.get("category") != "level"), None)
-            out.append({
-                "symbol": item.symbol, "name": sec.name if sec else item.symbol, "sector": sec.sector if sec else None,
-                "logo": f"{CDN}cmt/{sec.logo_path}" if sec and sec.logo_path else None,
-                "price": last, "change_pct": q["change_pct"] if q else (((closes[-1] / closes[-2]) - 1) * 100 if len(closes) > 1 else None),
-                "sparkline": closes, "verdict": a.verdict if a else None, "score": a.score if a else None,
-                "analysis_date": a.date.isoformat() if a else None,
-                "trend": a.trend["state"] if a else None,
-                "liquidity_grade": a.liquidity["grade"] if a else None, "liquidity_regime": a.liquidity["regime"] if a else None,
-                "top_pattern": {"name": top["name"], "direction": top["direction"], "status": top["status"], "priority": top["priority"]} if top else None,
-                "plan": plan_summary(ro.get("plan")),
-                "summary": ro.get("explanation", {}).get("summary") if ro else None,
-                "verdict_analyst": a.verdict_analyst if a else None, "score_analyst": a.score_analyst if a else None,
-                "plan_analyst": plan_summary((ra or {}).get("plan")),
-                "zone1": ((a.levels or {}).get("confluence") or {}).get("zone1") if a else None,
-                "summary_analyst": (ra or {}).get("explanation", {}).get("summary") if ra else None,
-                "verdict_smc": a.verdict_smc if a else None, "score_smc": a.score_smc if a else None,
-                "plan_smc": plan_summary((rs or {}).get("plan")),
-                "summary_smc": (rs or {}).get("explanation", {}).get("summary") if rs else None,
-                "agreement": agree,
-            })
+def _cap(name: str, default: int) -> int:
+    return int((settings().get("accounts") or {}).get(name, default))
+
+
+# ============================================================================ account
+class ProfileIn(BaseModel):
+    first_name: str = ""
+    last_name: str = ""
+
+
+@app.get("/api/auth/config")
+def auth_config() -> dict[str, Any]:
+    """Public: whether sign-in is on, and the Firebase web config (public values that identify the project)."""
+    return auth.public_config()
+
+
+def _me(s, u: User, row) -> dict[str, Any]:
+    out = accounts.profile_dict(row, u) | {"auth": auth.enabled()}
+    if u.admin:
+        out["local_data"] = accounts.local_data_counts(s) if u.uid != LOCAL_UID else {}
+        out["telegram_owner"] = accounts.telegram_owner(s) == u.uid
     return out
 
 
+@app.get("/api/me")
+def me(u: User = Depends(current_user)) -> dict[str, Any]:
+    with SessionLocal.begin() as s:
+        return _me(s, u, accounts.ensure_profile(s, u))
+
+
+@app.post("/api/me")
+def me_signed_in(body: ProfileIn, u: User = Depends(current_user)) -> dict[str, Any]:
+    """Called once after each sign-in with the name typed at sign-up (if any): creates the profile on the first sign-in
+    and only ever fills empty fields."""
+    with SessionLocal.begin() as s:
+        return _me(s, u, accounts.ensure_profile(s, u, body.first_name, body.last_name))
+
+
+@app.put("/api/me")
+def me_rename(body: ProfileIn, u: User = Depends(current_user)) -> dict[str, Any]:
+    if not body.first_name.strip():
+        raise HTTPException(400, "Enter your first name.")
+    with SessionLocal.begin() as s:
+        return _me(s, u, accounts.set_name(s, u, body.first_name, body.last_name))
+
+
+@app.delete("/api/me")
+def me_delete(u: User = Depends(current_user)) -> dict[str, Any]:
+    """Delete this account's data (watchlist, positions, preferences, profile). The browser then deletes the Firebase
+    account itself, after re-authenticating."""
+    if u.uid == LOCAL_UID:
+        raise HTTPException(400, "Sign-in is off: there is no account to delete.")
+    with SessionLocal.begin() as s:
+        return {"ok": True, "deleted": accounts.delete_account_data(s, u.uid)}
+
+
+@app.post("/api/me/claim-local")
+def me_claim_local(u: User = Depends(require_admin)) -> dict[str, Any]:
+    """Move the data made before sign-in was switched on (watchlist, positions, preferences) into this account."""
+    with SessionLocal.begin() as s:
+        return {"ok": True, "moved": accounts.claim_local(s, u.uid)}
+
+
+@app.post("/api/me/telegram-owner")
+def me_telegram_owner(u: User = Depends(require_admin)) -> dict[str, Any]:
+    """Make the Telegram digest and alerts report on this account's watchlist and positions."""
+    with SessionLocal.begin() as s:
+        accounts.set_telegram_owner(s, u.uid)
+    return {"ok": True}
+
+
+# ============================================================================ watchlist
+class AddReq(BaseModel):
+    query: str
+    list_id: int | None = None          # the list to put it on (the first list when omitted)
+
+
+class ListIn(BaseModel):
+    name: str
+
+
+def _watch_row(s, uid: str, symbol: str) -> dict[str, Any]:
+    sec = s.get(Security, symbol)
+    a = accounts.view(s, uid, _latest(s, symbol))
+    closes = s.scalars(select(PriceDaily.close).where(PriceDaily.symbol == symbol).order_by(PriceDaily.date.desc()).limit(60)).all()[::-1]
+    q = live.quotes.get(symbol)
+    ro, ra = split_engines(a.recommendation if a else None)
+    rs = (a.recommendation or {}).get("smc") if a else None
+    agree = (a.recommendation or {}).get("agreement") if a else None
+    last = q["close"] if q else (closes[-1] if closes else None)
+    top = next((p for p in (a.patterns if a else []) if p["status"] in ("confirmed", "forming") and p.get("category") != "level"), None)
+    return {
+        "symbol": symbol, "name": sec.name if sec else symbol, "sector": sec.sector if sec else None,
+        "logo": f"{CDN}cmt/{sec.logo_path}" if sec and sec.logo_path else None,
+        "price": last, "change_pct": q["change_pct"] if q else (((closes[-1] / closes[-2]) - 1) * 100 if len(closes) > 1 else None),
+        "sparkline": closes, "verdict": a.verdict if a else None, "score": a.score if a else None,
+        "analysis_date": a.date.isoformat() if a else None,
+        "trend": a.trend["state"] if a else None,
+        "liquidity_grade": a.liquidity["grade"] if a else None, "liquidity_regime": a.liquidity["regime"] if a else None,
+        "top_pattern": {"name": top["name"], "direction": top["direction"], "status": top["status"], "priority": top["priority"]} if top else None,
+        "plan": plan_summary(ro.get("plan")),
+        "summary": ro.get("explanation", {}).get("summary") if ro else None,
+        "verdict_analyst": a.verdict_analyst if a else None, "score_analyst": a.score_analyst if a else None,
+        "plan_analyst": plan_summary((ra or {}).get("plan")),
+        "zone1": ((a.levels or {}).get("confluence") or {}).get("zone1") if a else None,
+        "summary_analyst": (ra or {}).get("explanation", {}).get("summary") if ra else None,
+        "verdict_smc": a.verdict_smc if a else None, "score_smc": a.score_smc if a else None,
+        "plan_smc": plan_summary((rs or {}).get("plan")),
+        "summary_smc": (rs or {}).get("explanation", {}).get("summary") if rs else None,
+        "agreement": agree,
+    }
+
+
+@app.get("/api/watchlist")
+def get_watchlist(list_: str | None = Query(None, alias="list"), u: User = Depends(current_user)) -> list[dict[str, Any]]:
+    """The caller's stocks with the engines' verdicts. `list` = a list id, or "portfolio" (stocks with an open position);
+    without it, every stock the account tracks."""
+    with SessionLocal.begin() as s:                 # begin(): the first call makes "Watchlist 1" for a new account
+        try:
+            if list_ is None:
+                syms = accounts.watchlist_symbols(s, u.uid)
+            elif list_ == "portfolio":
+                syms = accounts.held_symbols(s, u.uid)
+            else:
+                syms = accounts.group_symbols(s, u.uid, int(list_))
+        except accounts.ListError as exc:
+            raise HTTPException(404, str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(400, "list must be a list id or 'portfolio'") from exc
+        return [_watch_row(s, u.uid, sym) for sym in syms]
+
+
 @app.post("/api/watchlist")
-def add_watchlist(req: AddReq) -> dict[str, Any]:
+def add_watchlist(req: AddReq, u: User = Depends(current_user)) -> dict[str, Any]:
     try:
-        sym = ingest.add_to_watchlist(req.query)
+        sym = ingest.add_to_watchlist(req.query, u.uid, None if u.admin else _cap("max_watchlist", 30), req.list_id)
     except ValueError as exc:
         raise HTTPException(400, str(exc))
     with SessionLocal.begin() as s:
@@ -117,9 +250,96 @@ def add_watchlist(req: AddReq) -> dict[str, Any]:
 
 
 @app.delete("/api/watchlist/{symbol}")
-def del_watchlist(symbol: str) -> dict[str, str]:
-    ingest.remove_from_watchlist(symbol)
-    return {"removed": symbol}
+def del_watchlist(symbol: str, list_: int | None = Query(None, alias="list"), u: User = Depends(current_user)) -> dict[str, Any]:
+    """Take a stock off one list (`list`), or off every list. Off its last list it stops being tracked."""
+    try:
+        untracked = ingest.remove_from_watchlist(symbol, u.uid, list_)
+    except accounts.ListError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    return {"removed": symbol, "untracked": untracked}
+
+
+# ---------------------------------------------------------------- named lists (home page tabs)
+@app.get("/api/lists")
+def get_lists(u: User = Depends(current_user)) -> dict[str, Any]:
+    with SessionLocal.begin() as s:
+        return {"lists": accounts.lists_overview(s, u.uid), "portfolio": len(accounts.held_symbols(s, u.uid)),
+                "max_lists": 50 if u.admin else _cap("max_lists", 10)}
+
+
+@app.post("/api/lists")
+def create_list(body: ListIn, u: User = Depends(current_user)) -> dict[str, Any]:
+    try:
+        with SessionLocal.begin() as s:
+            g = accounts.create_group(s, u.uid, body.name, 50 if u.admin else _cap("max_lists", 10))
+            return {"id": g.id, "name": g.name}
+    except accounts.ListError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@app.put("/api/lists/{gid}")
+def rename_list(gid: int, body: ListIn, u: User = Depends(current_user)) -> dict[str, Any]:
+    try:
+        with SessionLocal.begin() as s:
+            g = accounts.rename_group(s, u.uid, gid, body.name)
+            return {"id": g.id, "name": g.name}
+    except accounts.ListError as exc:
+        raise HTTPException(404 if "not found" in str(exc) else 400, str(exc)) from exc
+
+
+@app.delete("/api/lists/{gid}")
+def delete_list(gid: int, u: User = Depends(current_user)) -> dict[str, Any]:
+    """Delete a list. Stocks that were only on it stop being tracked."""
+    try:
+        with SessionLocal.begin() as s:
+            return {"ok": True, "untracked": accounts.delete_group(s, u.uid, gid)}
+    except accounts.ListError as exc:
+        raise HTTPException(404 if "not found" in str(exc) else 400, str(exc)) from exc
+
+
+# ---------------------------------------------------------------- every listed stock (the "All stocks" tab)
+_ALL: dict[str, Any] = {"at": 0.0, "rows": []}
+
+
+def _all_listed() -> list[dict[str, Any]]:
+    """Every security in CSE's latest trade summary (one request, cached for a minute)."""
+    import time as _t
+    from .cse_client import client, ms_to_date
+    if _ALL["rows"] and _t.monotonic() - _ALL["at"] < 60:
+        return _ALL["rows"]
+    rows = []
+    for r in client().trade_summary():
+        sym = r.get("symbol")
+        if not sym:
+            continue
+        price = r.get("price") or r.get("closingPrice") or None
+        rows.append({"symbol": sym, "name": r.get("name") or sym, "price": price, "change_pct": r.get("percentageChange") if price else None,
+                     "volume": r.get("sharevolume"), "turnover": r.get("turnover"), "trades": r.get("tradevolume"),
+                     "market_cap": r.get("marketCap"),
+                     "traded": str(ms_to_date(r["lastTradedTime"])) if r.get("lastTradedTime") else None})
+    _ALL["rows"], _ALL["at"] = rows, _t.monotonic()
+    return rows
+
+
+@app.get("/api/stocks/all")
+def all_stocks(u: User = Depends(current_user)) -> dict[str, Any]:
+    """Every listed security with its latest price, and where it sits for this account: on which lists, held, and whether it
+    meets the candidate rule (SCR)."""
+    try:
+        listed = _all_listed()
+    except Exception as exc:  # noqa: BLE001 - the CSE endpoints are unofficial
+        log.warning("all stocks: %s", exc)
+        raise HTTPException(502, "Couldn't reach the CSE for the list of stocks. Try again in a minute.") from exc
+    run = screener.latest(u.uid)
+    cand = {r["symbol"]: r for r in (run or {}).get("rows", [])}
+    with SessionLocal.begin() as s:
+        lists = accounts.symbol_lists(s, u.uid)
+        held = set(accounts.held_symbols(s, u.uid))
+        overview = accounts.lists_overview(s, u.uid)
+    rows = [{**r, "lists": lists.get(r["symbol"], []), "held": r["symbol"] in held,
+             "candidate": ({"qualifies": cand[r["symbol"]]["qualifies"], "hits": cand[r["symbol"]]["hits"], "rs_rank": cand[r["symbol"]]["rs_rank"]}
+                           if r["symbol"] in cand else None)} for r in listed]
+    return {"lists": overview, "count": len(rows), "rows": rows}
 
 
 # ============================================================================ stock data
@@ -147,7 +367,7 @@ def corporate_actions(symbol: str) -> list[dict[str, Any]]:
 
 
 @app.post("/api/stocks/{symbol}/corporate-actions")
-def add_corporate_action(symbol: str, a: CorporateActionIn) -> dict[str, Any]:
+def add_corporate_action(symbol: str, a: CorporateActionIn, _: User = Depends(require_admin)) -> dict[str, Any]:
     with SessionLocal.begin() as s:
         row = CorporateAction(symbol=symbol, manual=True, **a.model_dump())
         s.add(row)
@@ -158,7 +378,7 @@ def add_corporate_action(symbol: str, a: CorporateActionIn) -> dict[str, Any]:
 
 
 @app.put("/api/stocks/{symbol}/corporate-actions/{aid}")
-def edit_corporate_action(symbol: str, aid: int, a: CorporateActionIn) -> dict[str, Any]:
+def edit_corporate_action(symbol: str, aid: int, a: CorporateActionIn, _: User = Depends(require_admin)) -> dict[str, Any]:
     with SessionLocal.begin() as s:
         row = s.get(CorporateAction, aid)
         if not row or row.symbol != symbol:
@@ -171,7 +391,7 @@ def edit_corporate_action(symbol: str, aid: int, a: CorporateActionIn) -> dict[s
 
 
 @app.delete("/api/stocks/{symbol}/corporate-actions/{aid}")
-def delete_corporate_action(symbol: str, aid: int) -> dict[str, Any]:
+def delete_corporate_action(symbol: str, aid: int, _: User = Depends(require_admin)) -> dict[str, Any]:
     with SessionLocal.begin() as s:
         row = s.get(CorporateAction, aid)
         if row and row.symbol == symbol:
@@ -181,7 +401,7 @@ def delete_corporate_action(symbol: str, aid: int) -> dict[str, Any]:
 
 
 @app.post("/api/stocks/{symbol}/import")
-def import_history(symbol: str, body: ImportIn) -> dict[str, Any]:
+def import_history(symbol: str, body: ImportIn, _: User = Depends(require_admin)) -> dict[str, Any]:
     if len(body.csv) > 5_000_000:
         raise HTTPException(413, "CSV too large")
     try:
@@ -227,7 +447,7 @@ def candles(symbol: str, tf: str = "1D", raw: bool = False) -> dict[str, Any]:
 
 
 @app.get("/api/stocks/{symbol}/analysis")
-def analysis(symbol: str, tf: str = "1D") -> dict[str, Any]:
+def analysis(symbol: str, tf: str = "1D", u: User = Depends(current_user)) -> dict[str, Any]:
     t = _tf(tf)
     if t not in ("1D", "1W"):
         with SessionLocal.begin() as s:
@@ -245,7 +465,7 @@ def analysis(symbol: str, tf: str = "1D") -> dict[str, Any]:
                               "verdict_smc": rec["smc"]["verdict"], "score_smc": rec["smc"]["score"],
                               "logo": f"{CDN}cmt/{sec.logo_path}" if sec.logo_path else None, "sector": _sector_today(s, sec)})
     with SessionLocal() as s:
-        a = _latest(s, symbol)
+        a = accounts.view(s, u.uid, _latest(s, symbol))
         sec = s.get(Security, symbol)
         if not a:
             raise HTTPException(404, "No analysis yet; run the EOD job or re-add the stock")
@@ -259,12 +479,12 @@ def analysis(symbol: str, tf: str = "1D") -> dict[str, Any]:
 
 
 @app.get("/api/stocks/{symbol}/live")
-def live_check(symbol: str) -> dict[str, Any]:
+def live_check(symbol: str, u: User = Depends(current_user)) -> dict[str, Any]:
     """The live price against the stored daily analysis' levels: which patterns and plans the session has already
     invalidated, hit or overtaken. {} when there is no live quote from a session after the analysis."""
     from .live_status import live_overlay
     with SessionLocal() as s:
-        a = _latest(s, symbol)
+        a = accounts.view(s, u.uid, _latest(s, symbol))
         if not a:
             return {}
         quote = live.quotes.get(symbol)
@@ -286,7 +506,7 @@ class SectorIn(BaseModel):
 
 
 @app.put("/api/stocks/{symbol}/sector")
-def set_sector(symbol: str, body: SectorIn) -> dict[str, Any]:
+def set_sector(symbol: str, body: SectorIn, _: User = Depends(require_admin)) -> dict[str, Any]:
     with SessionLocal.begin() as s:
         sec = s.get(Security, symbol)
         if not sec:
@@ -296,12 +516,13 @@ def set_sector(symbol: str, body: SectorIn) -> dict[str, Any]:
 
 
 @app.post("/api/stocks/{symbol}/intraday/backfill")
-def intraday_backfill(symbol: str) -> dict[str, Any]:
+def intraday_backfill(symbol: str, u: User = Depends(current_user)) -> dict[str, Any]:
     from . import intraday
     with SessionLocal.begin() as s:
         sec = s.get(Security, symbol)
         if not sec:
             raise HTTPException(404, "unknown symbol")
+        _require_tracked(s, u, symbol)
         daily = ingest.backfill_deep_history(s, sec)
         got = intraday.backfill_intraday(s, symbol, full=True)
     intraday.refresh_today(symbol, force=True)
@@ -315,13 +536,15 @@ def intraday_backfill(symbol: str) -> dict[str, Any]:
 
 
 @app.post("/api/stocks/{symbol}/analyze")
-def reanalyze(symbol: str) -> dict[str, Any]:
+def reanalyze(symbol: str, u: User = Depends(current_user)) -> dict[str, Any]:
     with SessionLocal.begin() as s:
+        _require_tracked(s, u, symbol)
         r = eng.analyze_symbol(s, symbol)
-    if not r:
-        raise HTTPException(400, "Not enough data to analyse")
-    return {"ok": True, "verdict": r["verdict"], "score": r["score"], "verdict_analyst": r["verdict_analyst"], "score_analyst": r["score_analyst"],
-            "verdict_smc": r["verdict_smc"], "score_smc": r["score_smc"]}
+        if not r:
+            raise HTTPException(400, "Not enough data to analyse")
+        s.flush()
+        v = accounts.latest_view(s, u.uid, symbol)
+    return {"ok": True, **{k: getattr(v, k) for k in accounts.VERDICT_FIELDS}}
 
 
 @app.get("/api/stocks/{symbol}/history")
@@ -403,7 +626,7 @@ def fundamentals(symbol: str) -> dict[str, Any]:
 
 
 @app.post("/api/stocks/{symbol}/fundamentals")
-def add_fundamentals(symbol: str, f: FundamentalIn) -> dict[str, Any]:
+def add_fundamentals(symbol: str, f: FundamentalIn, _: User = Depends(require_admin)) -> dict[str, Any]:
     if f.period_type not in ("Q", "FY"):
         raise HTTPException(400, "period_type must be Q or FY")
     with SessionLocal.begin() as s:
@@ -419,7 +642,7 @@ def add_fundamentals(symbol: str, f: FundamentalIn) -> dict[str, Any]:
 
 
 @app.post("/api/stocks/{symbol}/fundamentals/{fid}/confirm")
-def confirm_fundamental(symbol: str, fid: int) -> dict[str, Any]:
+def confirm_fundamental(symbol: str, fid: int, _: User = Depends(require_admin)) -> dict[str, Any]:
     """Accept an auto-extracted row after checking it against the PDF: it is then used in the scores."""
     with SessionLocal.begin() as s:
         row = s.get(Fundamental, fid)
@@ -433,7 +656,7 @@ def confirm_fundamental(symbol: str, fid: int) -> dict[str, Any]:
 
 
 @app.post("/api/stocks/{symbol}/fundamentals/extract")
-def extract_fundamentals(symbol: str) -> dict[str, Any]:
+def extract_fundamentals(symbol: str, _: User = Depends(require_admin)) -> dict[str, Any]:
     """Re-read the newest quarterly statements (downloads each PDF again)."""
     with SessionLocal.begin() as s:
         if not s.get(Security, symbol):
@@ -447,7 +670,7 @@ def extract_fundamentals(symbol: str) -> dict[str, Any]:
 
 
 @app.delete("/api/stocks/{symbol}/fundamentals/{fid}")
-def del_fundamental(symbol: str, fid: int) -> dict[str, Any]:
+def del_fundamental(symbol: str, fid: int, _: User = Depends(require_admin)) -> dict[str, Any]:
     with SessionLocal.begin() as s:
         row = s.get(Fundamental, fid)
         if row and row.symbol == symbol:
@@ -470,14 +693,24 @@ def catalysts_view(symbol: str) -> dict[str, Any]:
 
 
 @app.get("/api/market/headlines")
-def market_headlines(limit: int = 40) -> list[dict[str, Any]]:
+def market_headlines(limit: int = 40, u: User = Depends(current_user)) -> list[dict[str, Any]]:
     from . import news_feeds
     from .db import Headline
     with SessionLocal() as s:
         news_feeds.refresh_async(ingest.watchlist_symbols(s))
-        rows = s.scalars(select(Headline).order_by(Headline.published.desc()).limit(limit)).all()
-        return eng._jsonable([{"source": h.source, "title": h.title, "link": h.link, "published": h.published, "symbols": h.symbols or [],
-                               "tone": h.tone} for h in rows])
+        mine = accounts.user_symbols(s, u.uid)
+        rows = s.scalars(select(Headline).where(Headline.kind.is_(None) | Headline.kind.in_(("local", "company")))
+                         .order_by(Headline.published.desc()).limit(limit)).all()
+        return eng._jsonable([_headline_row(h, mine) for h in rows])
+
+
+def _headline_row(h, mine: set[str]) -> dict[str, Any]:
+    llm = h.llm or {}
+    about = [c["symbol"] for c in llm.get("companies") or [] if c.get("about") == "primary"] if llm.get("by") else (h.symbols or [])
+    return {"source": h.outlet or h.source, "title": h.title, "link": h.link, "published": h.published, "kind": h.kind or "local",
+            "symbols": [x for x in about if x in mine], "tone": h.tone, "read_by": "Claude" if llm.get("by") else "keywords",
+            "category": llm.get("category"), "theme": llm.get("macro_theme"), "sl_market_tone": llm.get("sl_market_tone"),
+            "reason": llm.get("reason")}
 
 
 @app.get("/api/stocks/{symbol}/announcements")
@@ -490,7 +723,7 @@ def announcements(symbol: str, limit: int = 40) -> list[dict[str, Any]]:
 
 # ============================================================================ live quotes (SSE)
 @app.get("/api/live")
-async def live_stream(request: Request, symbols: str = "") -> StreamingResponse:
+async def live_stream(request: Request, symbols: str = "", _: User = Depends(current_user)) -> StreamingResponse:
     wanted = {x for x in symbols.split(",") if x}
 
     async def gen():
@@ -513,7 +746,7 @@ async def live_stream(request: Request, symbols: str = "") -> StreamingResponse:
 
 # ============================================================================ market, positions, prefs, jobs
 @app.get("/api/market")
-def market() -> dict[str, Any]:
+def market(u: User = Depends(current_user)) -> dict[str, Any]:
     from .analysis.market import market_regime
     with SessionLocal() as s:
         rows = s.scalars(select(MarketDaily).order_by(MarketDaily.date)).all()
@@ -522,7 +755,7 @@ def market() -> dict[str, Any]:
         last_d = s.scalar(select(SectorDaily.date).order_by(SectorDaily.date.desc()))
         sectors = s.scalars(select(SectorDaily).where(SectorDaily.date == last_d).order_by(SectorDaily.change_pct.desc())).all() if last_d else []
         mine: dict[str, list[str]] = {}
-        wl = set(ingest.watchlist_symbols(s))
+        wl = set(ingest.watchlist_symbols(s, u.uid))
         for sec in s.scalars(select(Security).where(Security.sector.is_not(None))):
             if sec.symbol in wl:
                 mine.setdefault(sec.sector, []).append(sec.symbol)
@@ -542,20 +775,52 @@ def market() -> dict[str, Any]:
 @app.get("/api/regime")
 def regime() -> dict[str, Any]:
     """Market banner: ASPI vs its 100 / 200-day averages and breadth (from the SCR ranking). Description only."""
+    from . import macro
     from .analysis.market import regime_banner
     with SessionLocal() as s:
         md = eng.load_market(s)
+        try:
+            overnight = macro.overnight_note(s)
+        except Exception as exc:  # noqa: BLE001 - the banner must load without world data
+            log.warning("overnight note: %s", exc)
+            overnight = None
     run = screener.latest()
-    return eng._jsonable(regime_banner(md, (run or {}).get("meta", {}).get("breadth_above50")))
+    return eng._jsonable({**regime_banner(md, (run or {}).get("meta", {}).get("breadth_above50")), "overnight": overnight})
+
+
+@app.get("/api/world")
+def world(u: User = Depends(current_user)) -> dict[str, Any]:
+    """World series with their measured link to the ASPI, the overnight note, world / economy headlines, the state of
+    each news source, and the headline reader's usage. Description only: no score uses any of it."""
+    from . import macro, news_feeds, news_llm
+    from .db import Headline, Preference
+    lk = macro.links()
+    with SessionLocal() as s:
+        snap = macro.snapshot(s, spark=60)
+        rows = s.scalars(select(Headline).where(Headline.kind.in_(("global", "macro"))).order_by(Headline.published.desc()).limit(30)).all()
+        seen, news = set(), []
+        for h in rows:                                   # the same story from several outlets once
+            if (h.cluster or h.id) in seen:
+                continue
+            seen.add(h.cluster or h.id)
+            news.append(_headline_row(h, set()) | {"theme": (h.llm or {}).get("macro_theme") or news_feeds.macro_theme(h.title)})
+        usage = s.get(Preference, news_llm.USAGE_KEY)
+        series = [{"code": k, **v, "link": (lk.get("series") or {}).get(k, {}).get("verdict_text"),
+                   "verdict": (lk.get("series") or {}).get(k, {}).get("verdict")} for k, v in snap.items()]
+        return eng._jsonable({"series": series, "overnight": macro.overnight_note(s, snap, lk), "news": news[:20],
+                              "study": {"date": lk.get("date"), "period": lk.get("period"), "events": lk.get("events")},
+                              "feeds": news_feeds.feed_status(s), "reader": {"enabled": bool(news_llm.cfg()["enabled"]), "model": news_llm.cfg()["model"],
+                                                                              "usage": usage.value if usage else None},
+                              "news_tone": macro.news_tone(s)})
 
 
 @app.get("/api/screener")
-def screener_view() -> dict[str, Any]:
-    return eng._jsonable({"run": screener.latest(), "progress": dict(screener.progress), "enabled": screener.cfg().get("enabled", True)})
+def screener_view(u: User = Depends(current_user)) -> dict[str, Any]:
+    return eng._jsonable({"run": screener.latest(u.uid), "progress": dict(screener.progress), "enabled": screener.cfg().get("enabled", True)})
 
 
 @app.post("/api/screener/run")
-def screener_run(full: bool = False) -> dict[str, Any]:
+def screener_run(full: bool = False, _: User = Depends(require_admin)) -> dict[str, Any]:
     if screener.progress["running"]:
         return {"started": False, "message": "already running"}
     threading.Thread(target=screener.run, kwargs={"force_universe": full}, daemon=True, name="screener").start()
@@ -563,9 +828,10 @@ def screener_run(full: bool = False) -> dict[str, Any]:
 
 
 @app.get("/api/journal")
-def journal_view() -> dict[str, Any]:
+def journal_view(u: User = Depends(current_user)) -> dict[str, Any]:
+    """The calls the engines made on the caller's stocks (watchlist and holdings)."""
     with SessionLocal() as s:
-        return eng._jsonable(journal.summary(s))
+        return eng._jsonable(journal.summary(s, symbols=accounts.user_symbols(s, u.uid)))
 
 
 class PositionIn(BaseModel):
@@ -584,15 +850,15 @@ class PositionClose(BaseModel):
 
 
 @app.get("/api/positions")
-def positions() -> list[dict[str, Any]]:
-    return _positions()
+def positions(u: User = Depends(current_user)) -> list[dict[str, Any]]:
+    return _positions(u.uid)
 
 
 @app.get("/api/portfolio")
-def portfolio_view() -> dict[str, Any]:
+def portfolio_view(u: User = Depends(current_user)) -> dict[str, Any]:
     """Totals for the Positions page: P/L after fees, risk to stops vs capital, concentration."""
     from . import portfolio
-    rows = _positions()
+    rows = _positions(u.uid)
     with SessionLocal() as s:
         sectors = {x.symbol: x.sector for x in s.scalars(select(Security))}
     for p in rows:
@@ -602,7 +868,7 @@ def portfolio_view() -> dict[str, Any]:
 
 
 @app.post("/api/telegram/test")
-def telegram_test() -> dict[str, Any]:
+def telegram_test(_: User = Depends(require_admin)) -> dict[str, Any]:
     if not telegram_bot.enabled():
         raise HTTPException(400, "Telegram isn't set up: add TELEGRAM_TOKEN and TELEGRAM_CHAT_ID to backend/.env (see the README), then restart.")
     telegram_bot.send_text("✅ CSE Advisor test message: alerts and the evening digest will arrive here.")
@@ -621,15 +887,15 @@ def _exit_warnings(s, symbol: str, a: Analysis | None) -> list[dict[str, Any]]:
         return []
 
 
-def _positions() -> list[dict[str, Any]]:
+def _positions(uid: str) -> list[dict[str, Any]]:
     with SessionLocal() as s:
         out = []
-        for p in s.scalars(select(Position).order_by(Position.closed, Position.entry_date.desc())):
-            a = _latest(s, p.symbol)
+        for p in s.scalars(select(Position).where(Position.user_id == uid).order_by(Position.closed, Position.entry_date.desc())):
+            a = accounts.view(s, uid, _latest(s, p.symbol))
             q = live.quotes.get(p.symbol)
             ro, ra = split_engines(a.recommendation if a else None)
             price = q["close"] if q else (ro.get("close") if a else None)
-            out.append({**{c.name: getattr(p, c.name) for c in p.__table__.columns},
+            out.append({**{c.name: getattr(p, c.name) for c in p.__table__.columns if c.name != "user_id"},
                         "price": price, "review": ro.get("position_review") if a else None,
                         "review_analyst": (ra or {}).get("position_review"),
                         "review_smc": ((a.recommendation or {}).get("smc") or {}).get("position_review") if a else None,
@@ -640,40 +906,45 @@ def _positions() -> list[dict[str, Any]]:
 
 
 @app.post("/api/positions")
-def add_position(p: PositionIn) -> dict[str, Any]:
+def add_position(p: PositionIn, u: User = Depends(current_user)) -> dict[str, Any]:
     with SessionLocal.begin() as s:
         if not s.get(Security, p.symbol):
             raise HTTPException(400, "Add the stock to the watchlist first")
-        s.add(Position(**p.model_dump()))
+        n = s.scalar(select(func.count()).select_from(Position).where(Position.user_id == u.uid)) or 0
+        if not u.admin and n >= _cap("max_positions", 200):
+            raise HTTPException(400, "You have too many positions recorded. Delete old closed ones first.")
+        s.add(Position(user_id=u.uid, **p.model_dump()))
     with SessionLocal.begin() as s:
-        eng.analyze_symbol(s, p.symbol)
+        accounts.refresh_review(s, u.uid, p.symbol)
     return {"ok": True}
 
 
+def _own_position(s, u: User, pid: int) -> Position:
+    p = s.get(Position, pid)
+    if not p or p.user_id != u.uid:
+        raise HTTPException(404, "not found")
+    return p
+
+
 @app.post("/api/positions/{pid}/close")
-def close_position(pid: int, c: PositionClose) -> dict[str, Any]:
+def close_position(pid: int, c: PositionClose, u: User = Depends(current_user)) -> dict[str, Any]:
     with SessionLocal.begin() as s:
-        p = s.get(Position, pid)
-        if not p:
-            raise HTTPException(404, "not found")
+        p = _own_position(s, u, pid)
         p.closed, p.exit_date, p.exit_price = True, c.exit_date, c.exit_price
         sym = p.symbol
     with SessionLocal.begin() as s:
-        eng.analyze_symbol(s, sym)
+        accounts.refresh_review(s, u.uid, sym)
     return {"ok": True}
 
 
 @app.delete("/api/positions/{pid}")
-def delete_position(pid: int) -> dict[str, Any]:
-    sym = None
+def delete_position(pid: int, u: User = Depends(current_user)) -> dict[str, Any]:
     with SessionLocal.begin() as s:
-        p = s.get(Position, pid)
-        if p:
-            sym = p.symbol
-            s.delete(p)
-    if sym:   # drop the position review from the stock's analysis now, not at the next evening run
-        with SessionLocal.begin() as s:
-            eng.analyze_symbol(s, sym)
+        p = _own_position(s, u, pid)
+        sym = p.symbol
+        s.delete(p)
+    with SessionLocal.begin() as s:   # drop (or redo) the position review now, not at the next evening run
+        accounts.refresh_review(s, u.uid, sym)
     return {"ok": True}
 
 
@@ -683,37 +954,67 @@ def catalog() -> dict[str, Any]:
 
 
 @app.get("/api/prefs/{key}")
-def get_pref(key: str) -> Any:
+def get_pref(key: str, u: User = Depends(current_user)) -> Any:
     with SessionLocal() as s:
-        p = s.get(Preference, key)
-        return p.value if p else None
+        return accounts.get_pref(s, u.uid, key)
 
 
 @app.put("/api/prefs/{key}")
-async def put_pref(key: str, request: Request) -> dict[str, Any]:
-    value = await request.json()
-    with SessionLocal.begin() as s:
-        p = s.get(Preference, key) or Preference(key=key)
-        p.value = value
-        s.add(p)
+async def put_pref(key: str, request: Request, u: User = Depends(current_user)) -> dict[str, Any]:
+    if len(key) > 100:
+        raise HTTPException(400, "key too long")
+    body = await request.body()
+    if len(body) > 200_000:
+        raise HTTPException(413, "preference too large")
+    value = json.loads(body or b"null")
+
+    def save() -> None:
+        with SessionLocal.begin() as s:
+            accounts.put_pref(s, u.uid, key, value)
+    await asyncio.to_thread(save)
     return {"ok": True}
 
 
 @app.post("/api/jobs/eod")
-def trigger_eod() -> dict[str, Any]:
+def trigger_eod(_: User = Depends(require_admin)) -> dict[str, Any]:
     threading.Thread(target=jobs.run_eod, kwargs={"notify": True}, daemon=True).start()
     return {"started": True}
 
 
 @app.get("/api/status")
-def status() -> dict[str, Any]:
+def status(u: User = Depends(current_user)) -> dict[str, Any]:
     with SessionLocal() as s:
         runs = s.scalars(select(JobRun).order_by(JobRun.started_at.desc()).limit(5)).all()
-    return {"market_open": market_open(), "telegram": telegram_bot.enabled(),
+    # job messages list every account's stocks: only the admin sees them
+    return {"market_open": market_open(), "telegram": telegram_bot.enabled(), "admin": u.admin, "auth": auth.enabled(),
             "live_updated": live.updated.isoformat() if live.updated else None,
-            "jobs": [{"job": r.job, "date": r.run_date.isoformat(), "ok": r.ok, "at": r.started_at.isoformat(), "message": r.message} for r in runs],
+            "jobs": [{"job": r.job, "date": r.run_date.isoformat(), "ok": r.ok, "at": r.started_at.isoformat(),
+                      "message": r.message if u.admin else None} for r in runs],
             "settings": {"capital": settings()["risk"]["capital_lkr"], "risk_pct": settings()["risk"]["risk_per_trade_pct"],
                          "fees_pct": settings()["costs"]["brokerage_pct_per_side"], "weights": settings()["weights"]}}
+
+
+# ============================================================================ Firebase sign-in helper
+# The sign-in pop-up / redirect runs on the app's own domain (authDomain = this host) so it works in Safari and in
+# home-screen apps, which block the third-party storage the default <project>.firebaseapp.com helper needs. Firebase
+# Hosting serves /__/auth/* by itself; anywhere else (this server) it is proxied to the project's firebaseapp.com.
+_AUTH_PATHS = {"auth/handler", "auth/handler.js", "auth/iframe", "auth/iframe.js", "auth/experiments.js", "firebase/init.json"}
+
+
+@app.get("/__/{path:path}")
+def firebase_helper(path: str, request: Request) -> Response:
+    pid = auth.project_id()
+    if not pid or path not in _AUTH_PATHS:
+        raise HTTPException(404, "not found")
+    import httpx
+    try:
+        r = httpx.get(f"https://{pid}.firebaseapp.com/__/{path}", params=dict(request.query_params), timeout=15,
+                      headers={"user-agent": request.headers.get("user-agent", "cse-advisor")})
+    except httpx.HTTPError as exc:
+        raise HTTPException(502, "Sign-in helper unavailable") from exc
+    keep = {k: v for k, v in r.headers.items() if k.lower() in ("content-type", "cache-control", "content-security-policy",
+                                                                 "x-frame-options", "cross-origin-opener-policy")}
+    return Response(content=r.content, status_code=r.status_code, headers=keep)
 
 
 # ============================================================================ frontend
@@ -730,10 +1031,17 @@ if FRONTEND_DIST.exists():
 
 def run() -> None:
     import uvicorn
-    from .config import env
-    # The app has no login, so it listens on this PC only by default. Set HOST=0.0.0.0 in
-    # backend/.env to reach it from your phone on home Wi-Fi (or use Tailscale instead).
-    uvicorn.run("cse_advisor.main:app", host=env("HOST", "127.0.0.1"), port=int(env("PORT", "8000")), reload=False)
+    host = env("HOST", "127.0.0.1")
+    # Without sign-in (no FIREBASE_PROJECT_ID) anyone who can reach the server can use and change everything, so it
+    # listens on this PC only. To open it to a network, switch sign-in on (README: Accounts), or set ALLOW_NO_AUTH=1
+    # for a trusted home network.
+    if not auth.enabled() and host not in ("127.0.0.1", "localhost", "::1") and env("ALLOW_NO_AUTH") != "1":
+        raise SystemExit(f"HOST={host} without sign-in would expose the app to the network. Set FIREBASE_PROJECT_ID "
+                         "(README: Accounts) or ALLOW_NO_AUTH=1 on a trusted network.")
+    if auth.enabled():
+        log.info("sign-in ON (Firebase project %s); admins: %s", auth.project_id(), ", ".join(sorted(auth.admin_emails())) or "none set")
+    uvicorn.run("cse_advisor.main:app", host=host, port=int(env("PORT", "8000")), reload=False,
+                proxy_headers=True, forwarded_allow_ips=env("FORWARDED_ALLOW_IPS", "127.0.0.1"))
 
 
 if __name__ == "__main__":

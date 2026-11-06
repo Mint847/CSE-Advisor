@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 from .config import settings
 from .cse_client import client, ms_to_date, ms_to_local, now_local
 from .db import (
-    Announcement, CorporateAction, FinancialReport, MarketDaily, Preference, PriceDaily, SessionLocal, Security,
+    LOCAL_UID, Announcement, CorporateAction, FinancialReport, MarketDaily, Preference, PriceDaily, SessionLocal, Security,
     WatchlistItem,
 )
 
@@ -690,16 +690,27 @@ def sync_report_figures(s: Session, symbol: str, n: int | None = None, force: bo
 
 
 # ---------------------------------------------------------------- orchestration
-def watchlist_symbols(s: Session) -> list[str]:
-    return list(s.scalars(select(WatchlistItem.symbol).order_by(WatchlistItem.added_at)))
+def watchlist_symbols(s: Session, user_id: str | None = None) -> list[str]:
+    """Stocks the data jobs keep up to date: every account's watchlist and open positions (each once). With
+    `user_id`, just that account's watchlist."""
+    from .accounts import tracked_symbols, watchlist_symbols as wl
+    return wl(s, user_id) if user_id is not None else tracked_symbols(s)
 
 
-def add_to_watchlist(user_input: str) -> str:
+def add_to_watchlist(user_input: str, user_id: str = LOCAL_UID, max_items: int | None = None, group_id: int | None = None) -> str:
+    """Track a stock for this account and put it on a list (`group_id`, or the first list)."""
+    from . import accounts
     symbol = resolve_symbol(user_input)
     with SessionLocal.begin() as s:
+        have = s.scalar(select(WatchlistItem).where(WatchlistItem.user_id == user_id, WatchlistItem.symbol == symbol))
+        if have is None and max_items is not None:
+            n = s.scalar(select(func.count()).select_from(WatchlistItem).where(WatchlistItem.user_id == user_id)) or 0
+            if n >= max_items:
+                raise ValueError(f"Your watchlist is full ({max_items} stocks). Remove one first.")
+        accounts.add_to_group(s, user_id, group_id, symbol)      # first: checks the list, before any slow fetching
         sec = upsert_security(s, symbol)
-        if not s.get(WatchlistItem, symbol):
-            s.add(WatchlistItem(symbol=symbol))
+        if have is None:
+            s.add(WatchlistItem(user_id=user_id, symbol=symbol))
         s.flush()
         backfill_history(s, sec)
         if s.scalar(select(func.count()).select_from(MarketDaily)) < 100:
@@ -728,11 +739,12 @@ def add_to_watchlist(user_input: str) -> str:
     return symbol
 
 
-def remove_from_watchlist(symbol: str) -> None:
+def remove_from_watchlist(symbol: str, user_id: str = LOCAL_UID, group_id: int | None = None) -> bool:
+    """Take a stock off one list (or all lists when `group_id` is None). Off its last list it stops being tracked.
+    Returns True when it is no longer tracked."""
+    from . import accounts
     with SessionLocal.begin() as s:
-        item = s.get(WatchlistItem, symbol)
-        if item:
-            s.delete(item)
+        return accounts.remove_from_group(s, user_id, group_id, symbol)
 
 
 def catch_up(s: Session) -> list[str]:

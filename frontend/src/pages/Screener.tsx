@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api, fmt, ticker, type ScreenerData, type ScreenerRow } from '../api'
+import { useSession } from '../auth/session'
 import { ErrorBox, Spinner } from '../components/ui'
 
 type Filter = 'rule' | 'two' | 'all'
@@ -13,6 +14,7 @@ function Check({ ok, label }: { ok: boolean; label: string }) {
 
 export default function Screener() {
   const nav = useNavigate()
+  const admin = useSession().profile?.admin ?? false
   const [data, setData] = useState<ScreenerData | null>(null)
   const [err, setErr] = useState<string | null>(null)
   const [filter, setFilter] = useState<Filter>('rule')
@@ -48,8 +50,10 @@ export default function Screener() {
       <section className="card">
         <div className="panel-title flex-wrap">
           <h1 className="flex-1">SCR · Candidate ranking <span className="font-normal normal-case text-muted">liquid CSE stocks, ranked after the close</span></h1>
-          <button className="btn !py-0.5" disabled={running} onClick={() => run(false)}>{running ? 'Running…' : 'Re-run now'}</button>
-          <button className="btn !py-0.5" disabled={running} onClick={() => run(true)} title="Re-check liquidity of every ordinary share on the CSE (about 15 minutes)">Re-check full list</button>
+          {admin && <>
+            <button className="btn !py-0.5" disabled={running} onClick={() => run(false)}>{running ? 'Running…' : 'Re-run now'}</button>
+            <button className="btn !py-0.5" disabled={running} onClick={() => run(true)} title="Re-check liquidity of every ordinary share on the CSE (about 15 minutes)">Re-check full list</button>
+          </>}
         </div>
         {err && <div className="p-2"><ErrorBox msg={err} /></div>}
         {running && prog && (

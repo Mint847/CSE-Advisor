@@ -19,10 +19,12 @@ dependencies = [
   "six",
   "python-dotenv",
   "pypdf",
+  "pyjwt[crypto]>=2.8",   # verifying Firebase ID tokens (sign-in)
 ]
 
 [project.optional-dependencies]
 dev = ["pytest"]
+llm = ["anthropic>=2"]    # Claude reads the news headlines (llm.enabled in settings.yaml)
 
 [build-system]
 requires = ["setuptools>=68"]
