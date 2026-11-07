@@ -138,7 +138,20 @@ You get an evening digest, alerts for signal changes and announcements, and comm
 - **JRN (F6), journal:** every BUY and WATCH call with its plan, scored after 5, 20, 40 and 60 sessions with fees, next to the back-test numbers. Needs a few months and roughly 100 scored calls per group before it means anything.
 - **Positions, "Consider trimming":** information only. It lists bearish patterns that the tests found to fall more often than comparable days, and a close below the 50-day average. The HOLD / TRIM / SELL review is unchanged.
 - **Market banner** on the watchlist: ASPI against its 100- and 200-day averages and market breadth. A description, not a signal; no engine uses it.
-- **Backups:** each evening the database is copied to `backend/data/backups/` (newest 14 kept). `install_autostart.ps1` starts the app when you log in to Windows.
+- **ALRT (F9), alerts and the inbox:** your own alerts on any stock you follow: price rises or falls to a level, up or down X% on the day, within X% of the 52-week high, volume at X times the 20-day average (all checked on each live quote while the market is open, so the app has to be running), and, checked each evening after the analysis, a new high-priority pattern, a new announcement (by importance), an engine changing its verdict, or the RSI crossing a level. Each alert fires at most once a day (price alerts can be set to fire once and switch off). Everything lands in the **inbox** (the bell in the header shows the unread count): your alerts plus the engines' own (stop or target hit, entry trigger, buy zone, the evening's signal changes). The Telegram owner also gets them on Telegram; browser pop-ups are optional. **+ Alert** in a stock's header has one-click +/-3% and +/-5% price alerts. Inbox entries are kept 90 days.
+- **NOTE (F10), notes:** free-text notes with tags on a stock (the **NOTE** tab on its page, and a count in its header), on a position (**Notes** button in PORT), or on nothing in particular. Closing a position asks what went right or wrong and saves it as a note tagged `review`. The NOTE page searches all of them.
+- **HMAP, heatmap:** every listed stock as a tile grouped by sector, sized by market cap (or today's turnover) and coloured by its change on the day; amber outline = on your lists; click a tile to open the stock (or its quote card). Sectors and industries come from TradingView's public scanner (refreshed weekly, display only: no engine uses them; the S&P/CSE sector index you can set in SET is still what the relative-strength line uses).
+- **NEWS, feed:** the CSE's announcements and the news headlines in one list, newest first, for your stocks or all tracked ones, filtered by type, tone, period and search. **CAL, calendar:** a month grid and list of results due (estimated), ex-dividend dates, payments, AGMs and corporate actions for your stocks, plus dates you add yourself.
+- **Quote card:** type any listed ticker (`ABAN <GO>`) or click it in All stocks or the heatmap and you get today's price, ranges, market cap, foreign holding and sector, with an Add button; nothing is fetched or stored until you add it. Every stock page also has a key-statistics strip under its header.
+- **Ticker tape** under the menu (desktop; switch off in SET) and click-to-sort columns on CANDIDATES; All stocks has a Sector column and filter.
+- **Keeping the data current:**
+  - The evening run is at 15:30 on weekdays. If the PC was asleep or off, the app notices within 15 minutes of waking (and at start-up) that the last session has no run, and does it then. A session the CSE did not hold (a holiday) is recorded as done.
+  - The footer shows the as-of date of prices, analysis, news and world markets; an amber banner appears when data is behind. **Settings > Data health** lists each source and every step of the last run, so a broken data source is no longer hidden behind an overall OK.
+- **Backups and moving the data:**
+  - Each evening the database is copied to the `backups` folder (newest 14 kept). Once a week the newest copy is zipped into `backup.offsite_dir` (default: a `CSE-Advisor-backups` folder in your OneDrive, if you have one; `off` to turn it off).
+  - Keep the database **out of OneDrive**: OneDrive syncing a live SQLite file can corrupt it. With the app closed, run `python -m cse_advisor.tools.move_data` (copies and checks every table, then sets `CSE_DATA_DIR` in `backend/.env`, and keeps the old folder renamed rather than deleting it).
+  - To go back to a backup, close the app and run `python -m cse_advisor.tools.restore` to list them, then `python -m cse_advisor.tools.restore <file>`. The database it replaces is kept beside it.
+  - `install_autostart.ps1` starts the app when you log in to Windows.
 
 ## Data and limits
 
@@ -162,7 +175,7 @@ cd backend && .venv\Scripts\python -m pytest -q
 cd frontend && npm test                       # sign-in rules (Node 22.18+)
 ```
 
-Covers the pattern detectors (planted and mirrored patterns), trade-plan rules, the three engines and their independence, intraday bar building, statement parsing, catalysts, corporate-action maths, portfolio totals, replay tests against known example setups, and sign-in (token checks, each account seeing only its own data, the migration of a pre-accounts database).
+Covers the pattern detectors (planted and mirrored patterns), trade-plan rules, the three engines and their independence, intraday bar building, statement parsing, catalysts, corporate-action maths, portfolio totals, replay tests against known example setups, sign-in (token checks, each account seeing only its own data, the migration of a pre-accounts database), the evening-run watchdog, data health, backups and restore, the alert rules and notes, and the market-overview routes and heatmap geometry.
 
 ## Disclaimer
 

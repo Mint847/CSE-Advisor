@@ -71,11 +71,15 @@ screener:                         # SCR: daily ranking of all liquid CSE stocks 
 
 backup:
   keep: 14                        # nightly copies of the database kept in data/backups
+  offsite_dir: ""                 # once a week the newest backup is zipped into this folder (the newest 8 are kept).
+                                  # "" = a CSE-Advisor-backups folder in your OneDrive if you have one; "off" = never
 
 accounts:                         # only when sign-in is on (FIREBASE_PROJECT_ID in .env); the admin has no limits
   max_watchlist: 30               # stocks per account (each one is fetched and analysed every evening)
   max_positions: 200              # position rows per account, open and closed
   max_lists: 10                   # named watchlists per account
+  max_alerts: 100                 # your own alert rules per account
+  max_notes: 2000                 # notes per account
 
 smc:                              # SMC engine (order blocks, premium/discount, FVG, sweeps)
   buy_score: 55                   # minimum SMC score for a BUY

@@ -15,8 +15,8 @@ from sqlalchemy.orm import Session
 
 from .auth import User
 from .db import (
-    LOCAL_UID, Analysis, Position, PositionReview, Preference, UserAccount, UserPref, WatchlistGroup, WatchlistGroupItem,
-    WatchlistItem,
+    LOCAL_UID, AlertEvent, Analysis, Note, Position, PositionReview, Preference, UserAccount, UserAlert, UserPref,
+    WatchlistGroup, WatchlistGroupItem, WatchlistItem,
 )
 
 log = logging.getLogger(__name__)
@@ -345,7 +345,7 @@ def set_telegram_owner(s: Session, uid: str) -> None:
 
 
 # ---------------------------------------------------------------- local data, delete
-_OWNED = (WatchlistItem, Position, PositionReview)
+_OWNED = (WatchlistItem, Position, PositionReview, UserAlert, AlertEvent, Note)
 
 
 def local_data_counts(s: Session) -> dict[str, int]:
@@ -371,6 +371,8 @@ def claim_local(s: Session, uid: str) -> dict[str, int]:
     _claim_lists(s, uid)
     moved_p = s.execute(update(Position).where(Position.user_id == LOCAL_UID).values(user_id=uid)).rowcount or 0
     s.execute(delete(PositionReview).where(PositionReview.user_id == LOCAL_UID))
+    for m in (UserAlert, AlertEvent, Note):          # alerts, their inbox and notes follow the data they are about
+        s.execute(update(m).where(m.user_id == LOCAL_UID).values(user_id=uid))
     have = set(s.scalars(select(UserPref.key).where(UserPref.user_id == uid)))
     moved_k = 0
     for p in s.scalars(select(UserPref).where(UserPref.user_id == LOCAL_UID)).all():

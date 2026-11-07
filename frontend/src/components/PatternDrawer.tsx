@@ -3,13 +3,23 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { fmt, type Analysis, type Pattern } from '../api'
 import { levelLayer, smcLayer, smcOn, type Layers } from '../chart/PriceChart'
+import { smcKindOf, smcZoneStyle, type SmcKind } from '../chart/smcStyle'
+import { SmcSwatch } from './SmcSwatch'
 import { CATEGORIES, CATEGORY_LABEL, PRESETS, type Mode, type PlanEngine, type StockPrefs } from '../prefs'
 import { EngineBadge, Switch } from './ui'
 
 const DIR_ICON: Record<string, string> = { bullish: '▲', bearish: '▼', neutral: '◆' }
 const dirCls = (d: string) => d === 'bullish' ? 'text-bull' : d === 'bearish' ? 'text-bear' : 'text-neutral'
 
-export interface LevelItem { key: string; label: string; sub: string; on: boolean; patternId?: string }
+export interface LevelItem { key: string; label: string; sub: string; on: boolean; patternId?: string; swatch?: { kind: SmcKind; dir: string; faded: boolean } }
+
+/** The drawn shape of an SMC pattern, for its swatch (null for lines-only patterns such as BOS / sweeps). */
+export function smcSwatchOf(p: Pattern): LevelItem['swatch'] {
+  const kind = smcKindOf(p.type)
+  if (!kind) return undefined
+  const st = smcZoneStyle(p.zones[0]?.role ?? (kind === 'ote' ? 'ote' : kind === 'fvg' ? 'fvg' : 'order_block'), p.context, p.direction)
+  return { kind, dir: p.direction, faded: (st?.strength ?? 1) < 1 }
+}
 export interface LevelGroup { title: string; layer: keyof Layers; items: LevelItem[] }
 
 /** Analyst-engine drawings as switchable rows (also used by the active-drawings strip). */
@@ -73,7 +83,7 @@ export function smcGroups(a: Analysis, prefs: StockPrefs): LevelGroup[] {
   const groups: LevelGroup[] = SMC_GROUPS.map(g => ({
     title: g.layer === 'ob' && htf ? `All order blocks (${htf.ltf} & ${htf.htf})` : g.title, layer: g.layer,
     items: smc.filter(p => inGroup(p, g.layer)).map(p => ({
-      key: p.id, patternId: p.id, label: `${DIR_ICON[p.direction]} ${p.name}`, on: smcOn(p, prefs.layers, ov), sub: sub(p),
+      key: p.id, patternId: p.id, label: `${DIR_ICON[p.direction]} ${p.name}`, on: smcOn(p, prefs.layers, ov), sub: sub(p), swatch: smcSwatchOf(p),
     })) })).filter(g => g.items.length)
   if (a.tf === '1m' || a.tf === '5m' || a.tf === '15m') groups.push({ title: 'CSE session windows (kill-zone adaptation)', layer: 'sess', items: [{
     key: 'sess', label: 'Opening hour 09:30–10:30 and closing hour 13:30–14:30', on: ov.sess ?? prefs.layers.sess,
@@ -99,6 +109,7 @@ function LevelGroups({ groups, prefs, setLayer, setLevel, selected, onSelect }: 
               <li key={it.key} onClick={() => it.patternId && onSelect(it.patternId)}
                   className={`flex min-h-9 items-center gap-2 py-1.5 pl-8 pr-3 ${it.patternId ? 'cursor-pointer hover:bg-[#1d1405]' : ''} ${selected && selected === it.patternId ? 'bg-[#1d1405]' : ''}`}>
                 <Switch on={it.on} onChange={v => setLevel(it.key, v)} label={`Show ${it.label}`} />
+                {it.swatch && <SmcSwatch kind={it.swatch.kind} dir={it.swatch.dir} faded={it.swatch.faded} />}
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-fg">{it.label}</span>
                   <span className="block truncate text-[11px] text-muted num" title={it.sub}>{it.sub}</span>

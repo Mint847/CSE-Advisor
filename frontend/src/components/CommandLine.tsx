@@ -1,7 +1,7 @@
 // Bloomberg-style command line: "<TICKER> <FUNCTION> <GO>" or a global function ("WL <GO>").
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
-import { api, ticker } from '../api'
+import { api, ticker, WATCH_CHANGED } from '../api'
 
 export const FUNCTIONS: { code: string; text: string; global?: boolean }[] = [
   { code: 'GP', text: 'Price chart & recommendation' },
@@ -12,7 +12,9 @@ export const FUNCTIONS: { code: string; text: string; global?: boolean }[] = [
   { code: 'CN', text: 'Catalysts: results, dividends, director dealings, calendar, headlines' },
   { code: 'CAT', text: 'Same as CN (catalysts)' },
   { code: 'CACS', text: 'Corporate actions & data import' },
+  { code: 'NOTE', text: 'Notes on this stock' },
   { code: 'PAT', text: 'Open the pattern & layer chooser' },
+  { code: '1M', text: 'Chart & engines on 1-minute bars' },
   { code: '5M', text: 'Chart & engines on 5-minute bars' },
   { code: '15M', text: 'Chart & engines on 15-minute bars' },
   { code: '1H', text: 'Chart & engines on 1-hour bars' },
@@ -25,14 +27,19 @@ export const FUNCTIONS: { code: string; text: string; global?: boolean }[] = [
   { code: 'MKT', text: 'Market (ASPI, breadth); also WEI', global: true },
   { code: 'SCR', text: 'Candidates: ranking of all liquid CSE stocks', global: true },
   { code: 'JRN', text: 'Forward-test journal: calls scored by what happened', global: true },
+  { code: 'HMAP', text: 'Market heatmap by sector (size = market cap, colour = day change)', global: true },
+  { code: 'NEWS', text: 'News & announcements feed (my stocks / all tracked)', global: true },
+  { code: 'CAL', text: 'Calendar: results due, ex-dividend, payments, AGMs', global: true },
+  { code: 'ALRT', text: 'Alerts: your own price and pattern alerts, and the inbox', global: true },
+  { code: 'NOTES', text: 'Notes on all your stocks (search, tags)', global: true },
   { code: 'SET', text: 'Settings & jobs', global: true },
   { code: 'ACCT', text: 'Account: profile, password, sign out', global: true },
   { code: 'ADD', text: 'Add a stock: ADD JKH', global: true },
   { code: 'HELP', text: 'Commands and keys', global: true },
 ]
-const TAB_OF: Record<string, string> = { GP: 'rec', CMP: 'cmp', SMC: 'smc', DES: 'des', LIQ: 'liq', CN: 'cn', CAT: 'cn', CACS: 'cacs', PAT: 'rec' }
+const TAB_OF: Record<string, string> = { GP: 'rec', CMP: 'cmp', SMC: 'smc', DES: 'des', LIQ: 'liq', CN: 'cn', CAT: 'cn', CACS: 'cacs', NOTE: 'note', PAT: 'rec' }
 const TF_OF: Record<string, string> = { '1M': '1m', '5M': '5m', '15M': '15m', '1H': '1h', '4H': '4h', '1D': '1D', '1W': '1W' }
-const GLOBAL_ROUTE: Record<string, string> = { WL: '/', ALL: '/?view=all', PORT: '/positions', MKT: '/market', WEI: '/market', SCR: '/screener', JRN: '/journal', SET: '/settings', ACCT: '/account' }
+const GLOBAL_ROUTE: Record<string, string> = { WL: '/', ALL: '/?view=all', PORT: '/positions', MKT: '/market', WEI: '/market', SCR: '/screener', JRN: '/journal', HMAP: '/heatmap', NEWS: '/news', CAL: '/calendar', ALRT: '/alerts', ALERTS: '/alerts', NOTES: '/notes', SET: '/settings', ACCT: '/account' }
 
 interface Props { onHelp: () => void; inputRef: React.RefObject<HTMLInputElement | null> }
 
@@ -47,8 +54,15 @@ export default function CommandLine({ onHelp, inputRef }: Props) {
   const [msg, setMsg] = useState<string | null>(null)
   const listId = 'cmd-suggestions'
   const blurTimer = useRef<number | undefined>(undefined)
+  const listed = useRef<{ symbol: string; name: string }[] | null>(null)    // every CSE-listed stock, fetched the first time one is needed
 
-  useEffect(() => { api.watchlist().then(w => setSyms(w.map(x => ({ symbol: x.symbol, name: x.name })))).catch(() => {}) }, [loc.pathname])
+  // the tracked stocks, fetched once and again only when the list changes (add / remove), not on every click
+  useEffect(() => {
+    const load = () => api.watchlist().then(w => setSyms(w.map(x => ({ symbol: x.symbol, name: x.name })))).catch(() => {})
+    load()
+    window.addEventListener(WATCH_CHANGED, load)
+    return () => window.removeEventListener(WATCH_CHANGED, load)
+  }, [])
   useEffect(() => { if (!msg) return; const t = window.setTimeout(() => setMsg(null), 4000); return () => window.clearTimeout(t) }, [msg])
 
   const currentSym = loc.pathname.startsWith('/stock/') ? decodeURIComponent(loc.pathname.split('/')[2]) : null
@@ -99,8 +113,16 @@ export default function CommandLine({ onHelp, inputRef }: Props) {
     if (currentSym && TAB_OF[a] && !resolve(a)) {
       nav(`/stock/${currentSym}?tab=${TAB_OF[a]}${a === 'PAT' ? '&pat=1' : ''}`); setQ(''); return
     }
+    if (a === 'NOTE' && !currentSym) { nav('/notes'); setQ(''); return }          // NOTE on a stock page = that stock's notes; elsewhere = all notes
     const sym = resolve(a)
-    if (!sym) { setMsg(`${a}: not on your watchlist. Type ADD ${a} <GO> to add it.`); return }
+    if (!sym) {
+      // not followed: if the CSE lists it, show its quote card (read-only, with an Add button)
+      try { listed.current ??= await api.listed() } catch { /* offline: fall through to the message */ }
+      const hit = (listed.current ?? []).filter(s => s.symbol.toUpperCase() === a || ticker(s.symbol).toUpperCase() === a)
+        .sort((x, y) => Number(y.symbol.endsWith('.N0000')) - Number(x.symbol.endsWith('.N0000')))[0]
+      if (hit) { nav(`/quote/${hit.symbol}`); setQ(''); return }
+      setMsg(`${a}: not a listed stock or function. Type HELP <GO> for the commands.`); return
+    }
     // "JKH 15M", "JKH GP 1H", "JKH SMC 4H": a function and / or a timeframe, in any order
     const fn = parts.slice(1).find(x => TAB_OF[x]) ?? 'GP'
     const tf = parts.slice(1).map(x => TF_OF[x]).find(Boolean)

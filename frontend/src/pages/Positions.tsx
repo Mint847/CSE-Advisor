@@ -1,11 +1,54 @@
-import { useEffect, useState } from 'react'
+import { Fragment, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { api, fmt, ticker, type Portfolio, type PositionRow, type WatchItem } from '../api'
+import NotesPanel from '../components/NotesPanel'
 import { ErrorBox, Section, Spinner, Stat, VerdictBadge } from '../components/ui'
 
 const lkr = (v: number | null | undefined) => v == null ? '–' : `${v < 0 ? '−' : ''}${Math.abs(v).toLocaleString(undefined, { maximumFractionDigits: 0 })}`
 
 const today = () => new Date().toISOString().slice(0, 10)
+
+/** Closing a position: the exit price and date, and (optionally) what went right or wrong, saved as a note tagged review. */
+function CloseDialog({ p, onClose, onDone }: { p: PositionRow; onClose: () => void; onDone: () => void }) {
+  const [px, setPx] = useState(p.price != null ? String(p.price) : '')
+  const [date, setDate] = useState(today())
+  const [review, setReview] = useState('')
+  const [err, setErr] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+  useEffect(() => {
+    const esc = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
+    document.addEventListener('keydown', esc)
+    return () => document.removeEventListener('keydown', esc)
+  }, [onClose])
+  const pct = px && Number(px) > 0 ? (Number(px) / p.entry_price - 1) * 100 : null
+  const submit = async () => {
+    setErr(null); setBusy(true)
+    try { await api.closePosition(p.id, date, Number(px), review.trim()); onDone() } catch (e) { setErr(String((e as Error).message)); setBusy(false) }
+  }
+  return (
+    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/70 p-3 sm:pt-16" role="dialog" aria-modal="true" aria-label={`Close ${ticker(p.symbol)}`} onMouseDown={e => { if (e.target === e.currentTarget) onClose() }}>
+      <form className="w-full max-w-[480px] border border-amber/60 bg-panel" onSubmit={e => { e.preventDefault(); submit() }}>
+        <div className="flex items-center gap-2 bg-panel-2 px-3 py-1.5">
+          <b className="text-[12px] uppercase tracking-wide text-amber">Close {ticker(p.symbol)}</b>
+          <span className="num text-[12px] text-muted">{p.quantity.toLocaleString()} @ {fmt(p.entry_price)}</span>
+          <button type="button" className="ml-auto text-muted hover:text-fg" onClick={onClose} aria-label="Cancel">✕</button>
+        </div>
+        <div className="space-y-2.5 p-3">
+          <div className="grid grid-cols-2 gap-2">
+            <label className="block"><span className="label">Exit price</span><input className="input num mt-0.5 w-full" type="number" step="any" min="0" required autoFocus value={px} onChange={e => setPx(e.target.value)} /></label>
+            <label className="block"><span className="label">Exit date</span><input className="input mt-0.5 w-full" type="date" required value={date} onChange={e => setDate(e.target.value)} /></label>
+          </div>
+          {pct != null && <p className={`num text-[12px] ${pct >= 0 ? 'text-bull' : 'text-bear'}`}>{pct >= 0 ? '+' : ''}{pct.toFixed(1)}% before fees</p>}
+          <label className="block"><span className="label">What went right or wrong? (optional)</span>
+            <textarea className="input mt-0.5 w-full" rows={4} value={review} onChange={e => setReview(e.target.value)} placeholder="Why you bought, why you sold, what you would do differently. Saved as a note tagged “review”." />
+          </label>
+          {err && <p className="text-[12px] text-bear" role="alert">{err}</p>}
+          <div className="flex justify-end gap-2"><button type="button" className="btn" onClick={onClose}>Cancel</button><button className="btn btn-primary" disabled={busy || !px}>{busy ? 'Closing…' : 'Close position'}</button></div>
+        </div>
+      </form>
+    </div>
+  )
+}
 
 export default function Positions() {
   const [rows, setRows] = useState<PositionRow[] | null>(null)
@@ -24,11 +67,8 @@ export default function Positions() {
       setF({ ...f, entry_price: '', quantity: '', stop: '', target: '' }); load()
     } catch (e) { setErr(String((e as Error).message)) }
   }
-  const close = async (p: PositionRow) => {
-    const px = prompt(`Exit price for ${p.symbol}?`, String(p.price ?? ''))
-    if (!px) return
-    await api.closePosition(p.id, today(), Number(px)); load()
-  }
+  const [closing, setClosing] = useState<PositionRow | null>(null)
+  const [notesFor, setNotesFor] = useState<number | null>(null)
   const open = rows?.filter(r => !r.closed) ?? []
   const closed = rows?.filter(r => r.closed) ?? []
   const realised = pf?.realised_net ?? closed.reduce((s, r) => s + ((r.exit_price ?? 0) - r.entry_price) * r.quantity, 0)
@@ -95,7 +135,8 @@ export default function Positions() {
                   const pl = fig?.unrealised_net ?? (p.price != null ? (p.price - p.entry_price) * p.quantity : null)
                   const plp = fig?.unrealised_net_pct ?? (p.price != null ? (p.price / p.entry_price - 1) * 100 : null)
                   return (
-                    <tr key={p.id} className="border-t border-line/60 align-top">
+                    <Fragment key={p.id}>
+                    <tr className="border-t border-line/60 align-top">
                       <td className="py-2"><Link className="font-semibold text-amber" to={`/stock/${p.symbol}`}>{ticker(p.symbol)}</Link><div className="text-xs text-muted">{p.entry_date}</div></td>
                       <td>{p.quantity.toLocaleString()}</td><td>{fmt(p.entry_price)}</td><td>{fmt(p.price)}</td>
                       <td className={pl != null && pl >= 0 ? 'text-bull' : 'text-bear'}>{pl != null ? `${pl.toLocaleString(undefined, { maximumFractionDigits: 0 })} (${plp!.toFixed(1)}%)` : '–'}</td>
@@ -103,8 +144,11 @@ export default function Positions() {
                       <td className="max-w-xs whitespace-normal"><VerdictBadge v={p.review?.action ?? p.verdict} /><div className="text-[11px] text-muted">{p.review?.reasons.join('; ')}</div></td>
                       <td className="max-w-xs whitespace-normal"><VerdictBadge v={p.review_analyst?.action ?? p.verdict_analyst} /><div className="text-[11px] text-muted">{p.review_analyst?.reasons.join('; ')}{p.review_analyst?.suggested_stop ? ` · stop ${fmt(p.review_analyst.suggested_stop)}` : ''}</div></td>
                       <td className="max-w-xs whitespace-normal"><VerdictBadge v={p.review_smc?.action ?? p.verdict_smc} /><div className="text-[11px] text-muted">{p.review_smc?.reasons.join('; ')}{p.review_smc?.suggested_stop ? ` · stop ${fmt(p.review_smc.suggested_stop)}` : ''}</div></td>
-                      <td className="whitespace-nowrap"><button className="btn !py-0.5 text-xs" onClick={() => close(p)}>Close</button></td>
+                      <td className="whitespace-nowrap"><button className="btn !py-0.5 text-xs" onClick={() => setClosing(p)}>Close</button>{' '}
+                        <button className="btn !py-0.5 text-xs" aria-pressed={notesFor === p.id} onClick={() => setNotesFor(notesFor === p.id ? null : p.id)}>Notes</button></td>
                     </tr>
+                    {notesFor === p.id && <tr><td colSpan={10} className="!whitespace-normal bg-panel-2 !p-0"><NotesPanel symbol={p.symbol} positionId={p.id} /></td></tr>}
+                    </Fragment>
                   )
                 })}
               </tbody>
@@ -114,19 +158,24 @@ export default function Positions() {
       </Section>
       {closed.length > 0 && (
         <Section title={`Closed (${closed.length})`} right={<span className={`text-sm font-semibold num ${realised >= 0 ? 'text-bull' : 'text-bear'}`}>realised LKR {realised.toLocaleString(undefined, { maximumFractionDigits: 0 })} {pf ? '(after fees)' : '(before fees)'}</span>}>
-          <table className="bb-table num">
+          <div className="overflow-x-auto"><table className="bb-table num">
             <tbody>
               {closed.map(p => (
-                <tr key={p.id} className="border-t border-line/60">
+                <Fragment key={p.id}>
+                <tr className="border-t border-line/60">
                   <td className="py-1">{ticker(p.symbol)}</td><td>{p.entry_date} → {p.exit_date}</td><td>{fmt(p.entry_price)} → {fmt(p.exit_price)}</td>
                   <td className={(p.exit_price ?? 0) >= p.entry_price ? 'text-bull' : 'text-bear'}>{(((p.exit_price ?? 0) / p.entry_price - 1) * 100).toFixed(1)}%</td>
-                  <td><button className="text-xs text-muted hover:text-bear" onClick={async () => { await api.deletePosition(p.id); load() }}>delete</button></td>
+                  <td className="whitespace-nowrap"><button className="mr-3 text-xs text-muted hover:text-amber" onClick={() => setNotesFor(notesFor === p.id ? null : p.id)}>notes</button>
+                    <button className="text-xs text-muted hover:text-bear" onClick={async () => { await api.deletePosition(p.id); load() }}>delete</button></td>
                 </tr>
+                {notesFor === p.id && <tr><td colSpan={5} className="!whitespace-normal bg-panel-2 !p-0"><NotesPanel symbol={p.symbol} positionId={p.id} /></td></tr>}
+                </Fragment>
               ))}
             </tbody>
-          </table>
+          </table></div>
         </Section>
       )}
+      {closing && <CloseDialog p={closing} onClose={() => setClosing(null)} onDone={() => { setClosing(null); load() }} />}
     </div>
   )
 }

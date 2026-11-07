@@ -3,17 +3,27 @@ import { Navigate, NavLink, Route, Routes, useNavigate } from 'react-router-dom'
 import { api } from './api'
 import { afterSignIn } from './auth/rules'
 import { AccountMenu, VerifyBanner } from './components/Account'
+import { DataBanner, HealthStrip, useHealth } from './components/DataHealth'
+import { Bell } from './components/Inbox'
+import Tape from './components/Tape'
 import CommandLine, { FUNCTIONS } from './components/CommandLine'
 import Account from './pages/Account'
+import Alerts from './pages/Alerts'
+import Calendar from './pages/Calendar'
+import Heatmap from './pages/Heatmap'
 import Journal from './pages/Journal'
 import Market from './pages/Market'
+import News from './pages/News'
+import Notes from './pages/Notes'
 import Positions from './pages/Positions'
+import Quote from './pages/Quote'
 import Screener from './pages/Screener'
 import Settings from './pages/Settings'
 import { AFTER_KEY } from './pages/SignIn'
 import StockDetail from './pages/StockDetail'
 import Home from './pages/Home'
 
+/** Function keys; entries with no key are menu-only (the command line reaches them too). */
 const FKEYS: { key: string; label: string; to?: string; help?: boolean }[] = [
   { key: 'F1', label: 'HELP', help: true },
   { key: 'F2', label: 'WL', to: '/' },
@@ -22,6 +32,11 @@ const FKEYS: { key: string; label: string; to?: string; help?: boolean }[] = [
   { key: 'F5', label: 'SCR', to: '/screener' },
   { key: 'F6', label: 'JRN', to: '/journal' },
   { key: 'F8', label: 'SET', to: '/settings' },
+  { key: 'F9', label: 'ALRT', to: '/alerts' },
+  { key: 'F10', label: 'NOTE', to: '/notes' },
+  { key: '', label: 'HMAP', to: '/heatmap' },
+  { key: '', label: 'NEWS', to: '/news' },
+  { key: '', label: 'CAL', to: '/calendar' },
 ]
 
 function useClock() {
@@ -51,7 +66,8 @@ function HelpPanel({ onClose }: { onClose: () => void }) {
             <div className="label mb-1">Keys</div>
             <table className="bb-table [&_td]:whitespace-normal"><tbody>
               <tr><td className="text-amber">/</td><td>focus the command line</td></tr>
-              {FKEYS.map(k => <tr key={k.key}><td className="text-amber">{k.key}</td><td>{k.label}</td></tr>)}
+              {FKEYS.filter(k => k.key).map(k => <tr key={k.key}><td className="text-amber">{k.key}</td><td>{k.label}</td></tr>)}
+              <tr><td className="text-amber">HMAP NEWS CAL</td><td>heatmap, news feed, calendar (menu or command line)</td></tr>
               <tr><td className="text-amber">P</td><td>stock page: patterns & layers</td></tr>
               <tr><td className="text-amber">↑ ↓ ENTER</td><td>watchlist: move and open</td></tr>
               <tr><td className="text-amber">ESC</td><td>close a panel / clear the command line</td></tr>
@@ -69,6 +85,7 @@ export default function App() {
   const [help, setHelp] = useState(false)
   const [status, setStatus] = useState<{ open: boolean; eod: string | null; telegram: boolean } | null>(null)
   const clock = useClock()
+  const health = useHealth()
 
   // after signing in, open the page that was asked for while signed out
   useEffect(() => {
@@ -120,6 +137,7 @@ export default function App() {
           <div className="ml-auto flex shrink-0 items-center gap-3 text-[11px] num sm:ml-0">
             <span className={status?.open ? 'text-bull' : 'text-muted'}>{status?.open ? '● LIVE' : '○ CLOSED'}</span>
             <span className="text-fg">{clock} <span className="text-muted">COLOMBO</span></span>
+            <Bell />
             <AccountMenu />
           </div>
         </div>
@@ -131,14 +149,16 @@ export default function App() {
               </button>
             ) : (
               <NavLink key={k.key} to={k.to!} end={k.to === '/'} className={link}>
-                <span className="bg-menu px-1 text-white">{k.key}</span>{({ WL: 'WATCHLIST', PORT: 'POSITIONS', MKT: 'MARKET', SCR: 'CANDIDATES', JRN: 'JOURNAL' } as Record<string, string>)[k.label] ?? 'SETTINGS'}
+                {k.key && <span className="bg-menu px-1 text-white">{k.key}</span>}{({ WL: 'WATCHLIST', PORT: 'POSITIONS', MKT: 'MARKET', SCR: 'CANDIDATES', JRN: 'JOURNAL', ALRT: 'ALERTS', NOTE: 'NOTES', HMAP: 'HEATMAP', NEWS: 'NEWS', CAL: 'CALENDAR' } as Record<string, string>)[k.label] ?? 'SETTINGS'}
               </NavLink>
             ))}
             <span className="ml-auto hidden shrink-0 pl-3 text-[11px] text-muted md:inline">type <b className="text-yellow">/</b> for the command line · <b className="text-yellow">HELP &lt;GO&gt;</b></span>
           </div>
         </nav>
+        <Tape />
       </header>
       <VerifyBanner />
+      <DataBanner h={health} />
       <main className="flex-1">
         <Routes>
           <Route path="/" element={<Home />} />
@@ -147,6 +167,12 @@ export default function App() {
           <Route path="/market" element={<Market />} />
           <Route path="/screener" element={<Screener />} />
           <Route path="/journal" element={<Journal />} />
+          <Route path="/alerts" element={<Alerts />} />
+          <Route path="/heatmap" element={<Heatmap />} />
+          <Route path="/news" element={<News />} />
+          <Route path="/calendar" element={<Calendar />} />
+          <Route path="/quote/:symbol" element={<Quote />} />
+          <Route path="/notes" element={<Notes />} />
           <Route path="/settings" element={<Settings />} />
           <Route path="/account" element={<Account />} />
           {['/login', '/signup', '/forgot'].map(p => <Route key={p} path={p} element={<Navigate to="/" replace />} />)}
@@ -155,7 +181,7 @@ export default function App() {
       <footer className="border-t border-line bg-panel">
         <div className="mx-auto flex max-w-[1700px] flex-wrap gap-x-4 gap-y-0.5 px-3 py-1 text-[11px] text-muted">
           <span>DATA <span className="text-fg">cse.lk (unofficial endpoints)</span></span>
-          <span>LAST EOD RUN <span className="text-fg num">{status?.eod ?? '–'}</span></span>
+          <HealthStrip h={health} />
           <span>TELEGRAM <span className={status?.telegram ? 'text-bull' : 'text-fg'}>{status?.telegram ? 'ON' : 'OFF'}</span></span>
           <span className="ml-auto">Decision support only, not financial advice.</span>
         </div>

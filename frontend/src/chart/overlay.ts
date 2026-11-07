@@ -7,6 +7,7 @@ import type {
   PrimitiveHoveredItem, SeriesAttachedParameter, SeriesType, Time,
 } from 'lightweight-charts'
 import type { Pattern, Plan, Pool, VolumeProfile, Zone } from '../api'
+import { SMC_ORDER, smcZoneStyle, type SmcZoneStyle } from './smcStyle'
 
 type Target = Parameters<IPrimitivePaneRenderer['draw']>[0]
 type Ctx = CanvasRenderingContext2D
@@ -118,6 +119,8 @@ export interface OverlayState {
 }
 
 interface Hit { id: string; kind: 'seg' | 'rect' | 'pt'; a: number; b: number; c: number; d: number }
+/** An SMC zone label, placed by the bottom pass and drawn by the top pass (above the candles). */
+interface SmcLabel { text: string; short: string; x: number; y: number; color: string; st: SmcZoneStyle; top: number; bottom: number }
 
 const alpha = (color: string, a: number) => {
   if (color.startsWith('#') && color.length === 7) {
@@ -132,6 +135,7 @@ export class PatternOverlay implements ISeriesPrimitive<Time> {
   private series: ISeriesApi<SeriesType, Time> | null = null
   private requestUpdate: (() => void) | null = null
   private hits: Hit[] = []
+  private smcLabels: SmcLabel[] = []
   private views: IPrimitivePaneView[]
   state: OverlayState
   palette: Palette
@@ -294,8 +298,10 @@ export class PatternOverlay implements ISeriesPrimitive<Time> {
           label(ctx, `${name} ${price.toFixed(2)}`, x0 + 4, y - 8, pal.accent, pal.bg, 'left', 10)
         }
       }
-      // pattern zones (candle boxes, squeeze areas, Fibonacci golden pocket)
+      // pattern zones (candle boxes, squeeze areas, Fibonacci golden pocket); SMC zones are collected and painted
+      // after, biggest first, each type in its own texture
       const hb = this.halfBar()
+      const smc: { p: Pattern; st: SmcZoneStyle; x1: number; xe: number; y1: number; h: number; low: number; high: number }[] = []
       for (const p of this.state.patterns) {
         for (const z of p.zones) {
           const x1 = this.x(z.t1), x2 = this.x(z.t2), y1 = this.y(z.high), y2 = this.y(z.low)
@@ -306,19 +312,9 @@ export class PatternOverlay implements ISeriesPrimitive<Time> {
             continue
           }
           const col = this.color(p)
-          if (z.role === 'order_block' || z.role === 'fvg' || z.role === 'ote') {
-            // SMC boxes: order blocks solid tint, fair value gaps lighter and dashed, OTE band amber
-            const c = z.role === 'ote' ? pal.accent : col
-            const xe = Math.min(W, x2), h = Math.max(2, y2 - y1), dim = this.dim(p)
-            const weekly = !!p.context.htf
-            ctx.fillStyle = alpha(c, dim ? 0.03 : z.role === 'order_block' ? (weekly ? 0.10 : 0.16) : z.role === 'fvg' ? 0.08 : 0.07)
-            ctx.fillRect(x1, y1, Math.max(0, xe - x1), h)
-            ctx.strokeStyle = alpha(c, dim ? 0.15 : 0.75)
-            ctx.lineWidth = p.id === this.state.highlightId ? 2 : weekly ? 1.5 : 1
-            ctx.setLineDash(z.role === 'order_block' ? (weekly ? [8, 3] : []) : [3, 3])
-            ctx.strokeRect(x1, y1, Math.max(0, xe - x1), h)
-            ctx.setLineDash([])
-            if (z.label && !dim) label(ctx, `${z.label} ${z.low.toFixed(2)}–${z.high.toFixed(2)}`, x1 + 3, y1 + Math.min(h / 2, 9), c, pal.bg, 'left', 10)
+          const st = smcZoneStyle(z.role, p.context, p.direction)
+          if (st) {
+            smc.push({ p, st, x1, xe: Math.min(W, x2), y1, h: Math.max(2, y2 - y1), low: z.low, high: z.high })
             continue
           }
           const a = this.dim(p) ? 0.04 : z.role === 'candle_box' ? 0.10 : 0.12
@@ -329,6 +325,43 @@ export class PatternOverlay implements ISeriesPrimitive<Time> {
           ctx.strokeRect(x1 - hb, y1 - 2, x2 - x1 + 2 * hb, y2 - y1 + 4)
         }
       }
+      const H = mediaSize.height
+      const labels: SmcLabel[] = []
+      smc.sort((a, b) => SMC_ORDER[a.st.kind] - SMC_ORDER[b.st.kind] || b.h * (b.xe - b.x1) - a.h * (a.xe - a.x1))
+      for (const s of smc) {
+        const { p, st, x1, xe, y1, h } = s
+        const w = Math.max(0, xe - x1)
+        if (w <= 0) continue
+        const c = st.color === 'accent' ? pal.accent : this.color(p)
+        const dim = this.dim(p)
+        const k = dim ? 0.25 : st.strength
+        const line = dim ? 0.2 : st.strength === 1 ? 0.85 : 0.55
+        ctx.lineWidth = p.id === this.state.highlightId ? 2 : 1
+        if (st.fill) { ctx.fillStyle = alpha(c, st.fill * k); ctx.fillRect(x1, y1, w, h) }
+        if (st.hatch) hatch(ctx, x1, y1, w, h, alpha(c, 0.4 * k), 6)
+        ctx.strokeStyle = alpha(c, line)
+        if (st.border === 'solid') {
+          ctx.setLineDash(st.dash); ctx.strokeRect(x1 + 0.5, y1 + 0.5, w - 1, h - 1)
+        } else if (st.border === 'double') {
+          ctx.setLineDash(st.dash); ctx.strokeRect(x1 + 0.5, y1 + 0.5, w - 1, h - 1)
+          ctx.setLineDash([])
+          if (w > 8 && h > 8) { ctx.strokeStyle = alpha(c, line * 0.7); ctx.strokeRect(x1 + 3.5, y1 + 3.5, w - 7, h - 7) }
+        } else {
+          ctx.setLineDash(st.dash)
+          ctx.beginPath(); ctx.moveTo(x1, y1 + 0.5); ctx.lineTo(xe, y1 + 0.5); ctx.moveTo(x1, y1 + h - 0.5); ctx.lineTo(xe, y1 + h - 0.5); ctx.stroke()
+        }
+        ctx.setLineDash([])
+        if (st.edgeBar && x1 >= 0) { ctx.fillStyle = alpha(c, dim ? 0.3 : 0.9); ctx.fillRect(x1, y1, 3, h) }
+        // label at the right end of the visible box, vertically centred on its visible part
+        const top = Math.max(0, y1), bottom = Math.min(H, y1 + h)
+        if (!dim && bottom - top > 0 && xe > 40) {
+          // narrow charts (phones): no price range, or the labels would cover the latest candles
+          const range = W < 640 ? '' : ` ${s.low.toFixed(2)}–${s.high.toFixed(2)}`
+          labels.push({ text: `${st.tag}${range}${st.statusText ? ' · ' + st.statusText : ''}`, short: st.tag, x: xe - 4, y: (top + bottom) / 2,
+                        color: c, st, top, bottom })
+        }
+      }
+      this.smcLabels = labels
     })
   }
 
@@ -425,9 +458,65 @@ export class PatternOverlay implements ISeriesPrimitive<Time> {
           if (x1 != null && x2 != null && y1 != null && y2 != null) hits.push({ id: p.id, kind: 'rect', a: x1 - hb, b: y1 - 2, c: x2 + hb, d: y2 + 2 })
         }
       }
+      if (this.state.pane === 'main') this.drawSmcLabels(ctx, mediaSize.height)
       this.hits = hits
     })
   }
+
+  /** SMC zone labels at the right end of each box, as chips in the zone's badge style. A label that would overlap one
+   *  already drawn moves a line down or up; if there is no room it shrinks to its tag (OB ↓, FVG ↑ ...). */
+  private drawSmcLabels(ctx: Ctx, H: number) {
+    const size = 10, hgt = size + 6
+    const placed: { l: number; r: number; t: number; b: number }[] = []
+    for (const lb of this.smcLabels) {
+      for (const text of [lb.text, lb.short]) {
+        const w = chipWidth(ctx, text, lb.st.badge, size)
+        const l = lb.x - w, r = lb.x
+        let at: number | null = null
+        for (const dy of [0, 13, -13, 26, -26]) {
+          const y = Math.max(hgt / 2, Math.min(H - hgt / 2, lb.y + dy))
+          if (!placed.some(p => l < p.r && r > p.l && y - hgt / 2 < p.b && y + hgt / 2 > p.t)) { at = y; break }
+        }
+        if (at != null) {
+          chip(ctx, text, lb.x, at, lb.color, this.palette.bg, lb.st.badge, size)
+          placed.push({ l, r, t: at - hgt / 2, b: at + hgt / 2 })
+          break
+        }
+      }
+    }
+  }
+}
+
+/** '/' diagonal hatch inside a rectangle (fair value gaps: a texture, so they read as gaps even in grayscale). */
+function hatch(ctx: Ctx, x: number, y: number, w: number, h: number, color: string, gap: number) {
+  ctx.save()
+  ctx.beginPath(); ctx.rect(x, y, w, h); ctx.clip()
+  ctx.strokeStyle = color; ctx.lineWidth = 1; ctx.setLineDash([])
+  ctx.beginPath()
+  for (let s = -h; s < w; s += gap) { ctx.moveTo(x + s, y + h); ctx.lineTo(x + s + h, y) }
+  ctx.stroke()
+  ctx.restore()
+}
+
+function chipWidth(ctx: Ctx, text: string, badge: SmcZoneStyle['badge'], size: number) {
+  ctx.font = `600 ${size}px ${CHART_FONT}`
+  return ctx.measureText(text).width + 6 + (badge === 'hatch' ? 12 : 0)
+}
+
+/** A label chip, right-aligned at x: filled (order block), outlined (weekly), with a hatch swatch (FVG), dotted (OTE). */
+function chip(ctx: Ctx, text: string, xRight: number, y: number, color: string, bg: string, badge: SmcZoneStyle['badge'], size = 10) {
+  const w = chipWidth(ctx, text, badge, size), h = size + 6, left = xRight - w, top = y - h / 2
+  if (badge === 'filled') {
+    ctx.fillStyle = alpha(color, 0.92); ctx.fillRect(left, top, w, h)
+  } else {
+    ctx.fillStyle = alpha(bg.startsWith('#') ? bg : '#000000', 0.88); ctx.fillRect(left, top, w, h)
+    ctx.strokeStyle = color; ctx.lineWidth = 1; ctx.setLineDash(badge === 'dotted' ? [1, 2] : [])
+    ctx.strokeRect(left + 0.5, top + 0.5, w - 1, h - 1); ctx.setLineDash([])
+    if (badge === 'hatch') hatch(ctx, left + 3, top + 3, 9, h - 6, color, 3)
+  }
+  ctx.fillStyle = badge === 'filled' ? '#000000' : color
+  ctx.textBaseline = 'middle'
+  ctx.fillText(text, left + 3 + (badge === 'hatch' ? 12 : 0), y + 0.5)
 }
 
 function segDist(px: number, py: number, x1: number, y1: number, x2: number, y2: number) {

@@ -349,6 +349,63 @@ class UserAccount(Base):
     last_seen: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
+class ListedMeta(Base):
+    """What kind of company each listed security is (TradingView's sector and industry, and its market cap), for every
+    stock the CSE lists, tracked or not. Display only: the engines use Security.sector (the S&P/CSE index code) instead."""
+    __tablename__ = "listed_meta"
+    symbol: Mapped[str] = mapped_column(String(20), primary_key=True)
+    name: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    sector: Mapped[str | None] = mapped_column(String(60), nullable=True)
+    industry: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    market_cap: Mapped[float | None] = mapped_column(Float, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class UserAlert(Base):
+    """One account's own alert rule on a stock (price crosses a level, big day move, volume spike, a new pattern...).
+    `params` depends on `kind` (alerts.KINDS). It fires at most once a day; `once` rules switch themselves off after firing."""
+    __tablename__ = "user_alerts"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[str] = mapped_column(String(128), index=True, default=LOCAL_UID)
+    symbol: Mapped[str] = mapped_column(String(20), index=True)
+    kind: Mapped[str] = mapped_column(String(30))
+    params: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    once: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    last_fired: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    fired_count: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class AlertEvent(Base):
+    """The inbox: everything that was announced to one account (its own alert rules, plus the engines' alerts for the
+    Telegram owner). `key` makes an event happen once per day even across restarts (it replaces the old in-memory set)."""
+    __tablename__ = "alert_events"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[str] = mapped_column(String(128), index=True, default=LOCAL_UID)
+    alert_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    symbol: Mapped[str | None] = mapped_column(String(20), index=True, nullable=True)
+    at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+    kind: Mapped[str] = mapped_column(String(30))
+    text: Mapped[str] = mapped_column(Text)
+    read: Mapped[bool] = mapped_column(Boolean, default=False)
+    key: Mapped[str | None] = mapped_column(String(120), index=True, nullable=True)
+
+
+class Note(Base):
+    """A note on a stock, on a position, or free-standing; the trade journal is the notes tagged `review`/`trade`."""
+    __tablename__ = "notes"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[str] = mapped_column(String(128), index=True, default=LOCAL_UID)
+    symbol: Mapped[str | None] = mapped_column(String(20), index=True, nullable=True)
+    position_id: Mapped[int | None] = mapped_column(Integer, index=True, nullable=True)
+    body: Mapped[str] = mapped_column(Text)
+    tags: Mapped[list[str]] = mapped_column(JSON, default=list)
+    pinned: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
 class PositionReview(Base):
     """The engines' review of one account's open position in a stock (HOLD / TRIM / SELL, suggested stop), made from the
     same evening's analysis. The shared Analysis row is position-free; this is the per-account layer on top of it."""

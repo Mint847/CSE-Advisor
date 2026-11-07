@@ -4,7 +4,7 @@ import { useNavigate } from 'react-router-dom'
 import { api, fmt, fmtBig, type AllStock, type AllStocksData } from '../api'
 import { ErrorBox, Spinner } from '../components/ui'
 
-type Key = 'ticker' | 'name' | 'last' | 'chg' | 'volume' | 'turnover'
+type Key = 'ticker' | 'name' | 'sector' | 'last' | 'chg' | 'volume' | 'turnover'
 type Filter = 'all' | 'mine' | 'cand' | 'traded'
 /** JKH for an ordinary share; TKYO.X for the non-voting share (same company, another security). */
 const label = (symbol: string) => { const [t, c] = symbol.split('.'); return c && c !== 'N0000' ? t + '.' + c[0] : t }
@@ -19,6 +19,7 @@ export default function AllStocks({ onChanged }: { onChanged: () => void }) {
   const [filter, setFilter] = useState<Filter>('all')
   const [sort, setSort] = useState<{ key: Key; dir: 1 | -1 }>({ key: 'turnover', dir: -1 })
   const [busy, setBusy] = useState<string | null>(null)
+  const [sector, setSector] = useState('')
 
   const load = useCallback(() => api.allStocks().then(d => { setData(d); setErr(null) }).catch(e => setErr(String(e.message ?? e))), [])
   useEffect(() => {
@@ -36,6 +37,7 @@ export default function AllStocks({ onChanged }: { onChanged: () => void }) {
       switch (sort.key) {
         case 'ticker': return label(r.symbol)
         case 'name': return r.name.toLowerCase()
+        case 'sector': return (r.sector ?? '~').toLowerCase()
         case 'last': return r.price ?? -1
         case 'chg': return r.change_pct ?? -999
         case 'volume': return r.volume ?? -1
@@ -44,13 +46,15 @@ export default function AllStocks({ onChanged }: { onChanged: () => void }) {
     }
     return (data?.rows ?? [])
       .filter(r => !needle || label(r.symbol).toLowerCase().includes(needle) || r.name.toLowerCase().includes(needle))
+      .filter(r => !sector || r.sector === sector)
       .filter(r => filter === 'all' ? true : filter === 'mine' ? mine(r) : filter === 'cand' ? !!r.candidate?.qualifies : (r.turnover ?? 0) > 0)
       .sort((a, b) => { const x = v(a), y = v(b); return (x < y ? -1 : x > y ? 1 : 0) * sort.dir })
-  }, [data, q, filter, sort])
+  }, [data, q, filter, sort, sector])
+  const sectors = useMemo(() => [...new Set((data?.rows ?? []).map(r => r.sector).filter((s): s is string => !!s))].sort(), [data])
 
   const th = (key: Key, label: string, cls = '') => (
     <th className={cls} aria-sort={sort.key === key ? (sort.dir === 1 ? 'ascending' : 'descending') : 'none'}>
-      <button className="uppercase hover:text-yellow" onClick={() => setSort(s => ({ key, dir: s.key === key ? (s.dir === 1 ? -1 : 1) : (key === 'ticker' || key === 'name' ? 1 : -1) }))}>
+      <button className="uppercase hover:text-yellow" onClick={() => setSort(s => ({ key, dir: s.key === key ? (s.dir === 1 ? -1 : 1) : (key === 'ticker' || key === 'name' || key === 'sector' ? 1 : -1) }))}>
         {label}{sort.key === key ? (sort.dir === 1 ? ' ▲' : ' ▼') : ''}
       </button>
     </th>
@@ -75,6 +79,11 @@ export default function AllStocks({ onChanged }: { onChanged: () => void }) {
         {FILTERS.map(([k, label]) => (
           <button key={k} className="btn !py-0 text-[11px]" aria-pressed={filter === k} onClick={() => setFilter(k)}>{label}</button>
         ))}
+        {sectors.length > 0 && (
+          <select className="input !py-0 text-[11px]" value={sector} onChange={e => setSector(e.target.value)} aria-label="Filter by sector">
+            <option value="">All sectors</option>{sectors.map(s => <option key={s} value={s}>{s}</option>)}
+          </select>
+        )}
         <span className="ml-auto text-[11px] text-muted">{rows.length} shown</span>
       </div>
       {err && <div className="p-2"><ErrorBox msg={err} /></div>}
@@ -86,6 +95,7 @@ export default function AllStocks({ onChanged }: { onChanged: () => void }) {
               <tr>
                 {th('ticker', 'Ticker')}
                 {th('name', 'Name', 'hidden md:table-cell')}
+                {th('sector', 'Sector', 'hidden lg:table-cell')}
                 {th('last', 'Last', 'text-right')}
                 {th('chg', 'Chg%', 'text-right')}
                 {th('volume', 'Volume', 'hidden text-right lg:table-cell')}
@@ -99,10 +109,11 @@ export default function AllStocks({ onChanged }: { onChanged: () => void }) {
                 const free = (data.lists ?? []).filter(l => !r.lists.includes(l.id))
                 const open = mine(r)
                 return (
-                  <tr key={r.symbol} className={open ? 'row-link' : ''} onClick={() => open && nav(`/stock/${r.symbol}`)}
-                      title={open ? undefined : 'Add it to a list to analyse it'}>
+                  <tr key={r.symbol} className="row-link" onClick={() => nav(open ? `/stock/${r.symbol}` : `/quote/${r.symbol}`)}
+                      title={open ? undefined : 'Open the quote card (add it to a list to analyse it)'}>
                     <td className="font-semibold text-amber">{label(r.symbol)}</td>
                     <td className="hidden max-w-[260px] truncate text-muted md:table-cell" title={r.name}>{r.name}</td>
+                    <td className="hidden max-w-[150px] truncate text-muted lg:table-cell" title={r.industry ?? undefined}>{r.sector ?? '–'}</td>
                     <td className="text-right font-semibold num">{fmt(r.price)}</td>
                     <td className={`text-right num ${r.change_pct == null ? 'text-muted' : r.change_pct >= 0 ? 'text-bull' : 'text-bear'}`}>
                       {r.change_pct == null ? '–' : `${r.change_pct >= 0 ? '+' : ''}${r.change_pct.toFixed(2)}`}</td>
@@ -126,7 +137,7 @@ export default function AllStocks({ onChanged }: { onChanged: () => void }) {
                   </tr>
                 )
               })}
-              {rows.length === 0 && <tr><td colSpan={8} className="p-6 text-center text-muted">No stocks match.</td></tr>}
+              {rows.length === 0 && <tr><td colSpan={9} className="p-6 text-center text-muted">No stocks match.</td></tr>}
             </tbody>
           </table>
         </div>

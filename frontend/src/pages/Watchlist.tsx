@@ -39,6 +39,7 @@ export default function Watchlist({ scope, actions, onChanged }: { scope: Scope;
   const listId = scope.kind === 'list' ? scope.id : null
   const [items, setItems] = useState<WatchItem[] | null>(null)
   const [held, setHeld] = useState<Map<string, { qty: number; cost: number }>>(new Map())
+  const [fee, setFee] = useState(0.0112)     // per side; the positions page uses the same figure (settings.yaml costs.brokerage_pct_per_side)
   const [q, setQ] = useState('')
   const [adding, setAdding] = useState(false)
   const [err, setErr] = useState<string | null>(null)
@@ -48,6 +49,7 @@ export default function Watchlist({ scope, actions, onChanged }: { scope: Scope;
   const load = useCallback(() => {
     // the portfolio table needs the positions too: show both together, not the stocks first and the numbers later
     const pos = listId == null ? api.positions().then(holdings).catch(() => null) : Promise.resolve(null)
+    if (listId == null) api.status().then(s => setFee(s.settings.fees_pct / 100)).catch(() => {})
     Promise.all([api.watchlist(listId ?? 'portfolio'), pos])
       .then(([w, h]) => { if (h) setHeld(h); setItems(w) })
       .catch(e => setErr(String(e.message ?? e)))
@@ -71,8 +73,8 @@ export default function Watchlist({ scope, actions, onChanged }: { scope: Scope;
     const h = held.get(it.symbol)
     const avg = h && h.qty ? h.cost / h.qty : null
     return { it, i, price, chg: lq?.change_pct ?? it.change_pct, next: nextLevel(it, price), qty: h?.qty ?? null, avg,
-             pl: avg && price != null ? (price / avg - 1) * 100 : null }
-  }), [items, quotes, held])
+             pl: avg && price != null ? ((price * (1 - fee)) / (avg * (1 + fee)) - 1) * 100 : null }
+  }), [items, quotes, held, fee])
 
   const sorted = useMemo(() => {
     const v = (r: (typeof rows)[number]): number | string => {
@@ -137,7 +139,7 @@ export default function Watchlist({ scope, actions, onChanged }: { scope: Scope;
                   <th className="hidden lg:table-cell">Name</th>
                   {th('last', 'Last', 'text-right')}
                   {th('chg', 'Chg%', 'text-right')}
-                  {portfolio && <><th className="text-right">Qty</th><th className="text-right">Avg</th><th className="text-right" title="Last price against your average cost, before fees. The positions page shows it after fees.">P/L%</th></>}
+                  {portfolio && <><th className="text-right">Qty</th><th className="text-right">Avg</th><th className="text-right" title="After fees: the last price less the sell fee, against your average cost plus the buy fee. The same figure as the positions page.">P/L%</th></>}
                   <th className="hidden md:table-cell">60D</th>
                   {th('orig', 'Cls')}
                   {th('anly', 'Lvl')}

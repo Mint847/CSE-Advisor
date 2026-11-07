@@ -2,11 +2,17 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api, fmt, ticker, type ScreenerData, type ScreenerRow } from '../api'
 import { useSession } from '../auth/session'
+import { useSort } from '../components/sort'
 import { ErrorBox, Spinner } from '../components/ui'
 
 type Filter = 'rule' | 'two' | 'all'
 const pct = (x: number | null | undefined, nd = 1) => x == null ? '–' : `${x >= 0 ? '+' : ''}${(x * 100).toFixed(nd)}%`
 const tone = (x: number | null | undefined) => x == null ? 'text-muted' : x >= 0 ? 'text-bull' : 'text-bear'
+
+const GET: Record<string, (r: ScreenerRow) => number | string | null> = {
+  ticker: r => ticker(r.symbol), last: r => r.close, chg: r => r.chg1d, r20: r => r.ret20, r60: r => r.ret60, r120: r => r.ret120,
+  vs: r => r.rs120, d52: r => r.dist52, rank: r => r.rs_rank, turn: r => r.turn,
+}
 
 function Check({ ok, label }: { ok: boolean; label: string }) {
   return <span className={`inline-block w-[1.2em] text-center ${ok ? 'text-bull' : 'text-bear'}`} title={`${label}: ${ok ? 'met' : 'not met'}`} aria-label={`${label} ${ok ? 'met' : 'not met'}`}>{ok ? '●' : '○'}</span>
@@ -37,10 +43,11 @@ export default function Screener() {
     try { await api.addStock(r.symbol); await load() } catch (e) { setErr(String((e as Error).message)) } finally { setAdding(null) }
   }
 
-  const rows = useMemo(() => {
+  const picked = useMemo(() => {
     const all = data?.run?.rows ?? []
     return filter === 'rule' ? all.filter(r => r.qualifies) : filter === 'two' ? all.filter(r => !r.qualifies && r.hits === 2) : all
   }, [data, filter])
+  const { rows, th, sort, reset } = useSort(picked, GET)
 
   const meta = data?.run?.meta
   const prog = data?.progress
@@ -94,11 +101,12 @@ export default function Screener() {
                 <table className="bb-table">
                   <thead>
                     <tr>
-                      <th className="w-8">#</th><th>Ticker</th><th className="hidden lg:table-cell">Name</th>
-                      <th className="text-right">Last</th><th className="text-right">Chg%</th>
-                      <th className="hidden text-right md:table-cell">20D</th><th className="hidden text-right md:table-cell">60D</th><th className="text-right">120D</th>
-                      <th className="hidden text-right md:table-cell">vs ASPI</th><th className="text-right">From 52W high</th>
-                      <th className="hidden text-right md:table-cell">RS rank</th><th className="hidden text-right lg:table-cell">Turnover/day</th>
+                      <th className="w-8"><button className="hover:text-yellow" onClick={reset} title="Back to the ranking order" aria-label="Sort by rank">#{sort ? ' ↺' : ''}</button></th>
+                      {th('ticker', 'Ticker', '', true)}<th className="hidden lg:table-cell">Name</th>
+                      {th('last', 'Last', 'text-right')}{th('chg', 'Chg%', 'text-right')}
+                      {th('r20', '20D', 'hidden text-right md:table-cell')}{th('r60', '60D', 'hidden text-right md:table-cell')}{th('r120', '120D', 'text-right')}
+                      {th('vs', 'vs ASPI', 'hidden text-right md:table-cell')}{th('d52', 'From 52W high', 'text-right')}
+                      {th('rank', 'RS rank', 'hidden text-right md:table-cell')}{th('turn', 'Turnover/day', 'hidden text-right lg:table-cell')}
                       <th title="1) uptrend  2) within 10% of the 52-week high  3) top 40% by 120-day return">Rule</th><th>Watchlist</th>
                     </tr>
                   </thead>

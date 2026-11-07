@@ -2,11 +2,15 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link, useParams, useSearchParams } from 'react-router-dom'
 import { TF_LABEL, TIMEFRAMES, api, engines, fmt, isIntraday, ticker, type Analysis, type Candles, type Coverage, type EngineRec, type LiveOverlay, type LiveStatus, type Timeframe } from '../api'
 import PriceChart, { engineOf, levelPatterns, smcPatterns } from '../chart/PriceChart'
+import { AlertDialog } from '../components/AlertForm'
+import { StockStats } from '../components/KeyStats'
 import CorporatePanel from '../components/CorporatePanel'
+import NotesPanel from '../components/NotesPanel'
 import FundamentalsTab from '../components/FundamentalsTab'
 import LiquidityTab from '../components/LiquidityTab'
 import CatalystsTab, { OverallBadge } from '../components/CatalystsTab'
-import PatternDrawer, { analystGroups, smcGroups } from '../components/PatternDrawer'
+import PatternDrawer, { analystGroups, smcGroups, type LevelItem } from '../components/PatternDrawer'
+import { SmcKey, SmcSwatch } from '../components/SmcSwatch'
 import RecommendationTab, { type RecView } from '../components/RecommendationTab'
 import { AgreeBadge, ENGINE_TEXT, EngineBadge, ErrorBox, Spinner, VerdictBadge } from '../components/ui'
 import { filterPatterns, useCatalog, useStockPrefs } from '../prefs'
@@ -19,6 +23,7 @@ const TABS = [
   { id: 'liq', code: 'LIQ', label: 'Liquidity & levels' },
   { id: 'cn', code: 'CN', label: 'Catalysts & news' },
   { id: 'cacs', code: 'CACS', label: 'Corporate actions & data' },
+  { id: 'note', code: 'NOTE', label: 'Notes' },
 ] as const
 type TabId = (typeof TABS)[number]['id']
 
@@ -92,6 +97,14 @@ export default function StockDetail() {
   const { quotes, open } = useLive([symbol])
   const quote = quotes[symbol] ?? null
   const chipStrip = useHScroll<HTMLDivElement>()
+  const [alertDlg, setAlertDlg] = useState(false)
+  const [counts, setCounts] = useState({ alerts: 0, notes: 0 })
+  const loadCounts = useCallback(() => {
+    if (!symbol) return
+    Promise.all([api.alerts().then(d => d.rules.filter(r => r.symbol === symbol && r.active).length), api.notes({ symbol }).then(n => n.length)])
+      .then(([alerts, notes]) => setCounts({ alerts, notes })).catch(() => {})
+  }, [symbol])
+  useEffect(() => { loadCounts() }, [loadCounts])
 
   const tabParam = params.get('tab') ?? 'rec'
   const tab: TabId = (tabParam === 'cmp' || tabParam === 'smc' ? 'rec' : TABS.some(t => t.id === tabParam) ? tabParam : 'rec') as TabId
@@ -187,12 +200,12 @@ export default function StockDetail() {
   if (err && !daily) return <div className="p-3"><ErrorBox msg={err} /><Link to="/" className="mt-3 inline-block text-amber">← WL &lt;GO&gt;</Link></div>
 
   // active-drawings strip: everything currently drawn, removable with one click
-  const allChips: { key: string; label: string; cls: string; off: () => void; id?: string }[] = [
+  const allChips: { key: string; label: string; cls: string; off: () => void; id?: string; swatch?: LevelItem['swatch'] }[] = [
     ...(mask.original ? f.listed.filter(f.isVisible) : []).map(p => ({ key: p.id, id: p.id, label: `${p.direction === 'bullish' ? '▲' : p.direction === 'bearish' ? '▼' : '◆'} ${p.name}${liveCheck?.patterns?.[p.id]?.state === 'invalidated' ? ' ⚠ live' : liveCheck?.patterns?.[p.id]?.state === 'target' ? ' ✓ live' : ''}`,
       cls: p.direction === 'bullish' ? 'text-bull' : p.direction === 'bearish' ? 'text-bear' : 'text-neutral', off: () => update({ overrides: { ...prefs.overrides, [p.id]: false }, preset: null }) })),
     ...(mask.analyst ? groups : []).flatMap(g => g.items.filter(i => i.on).map(i => ({ key: i.key, id: i.patternId, label: i.label, cls: 'text-plan-anly',
       off: () => update({ levelOverrides: { ...prefs.levelOverrides, [i.key]: false }, preset: null }) }))),
-    ...(mask.smc ? sGroups : []).flatMap(g => g.items.filter(i => i.on).map(i => ({ key: i.key, id: i.patternId, label: i.label, cls: 'text-plan-smc',
+    ...(mask.smc ? sGroups : []).flatMap(g => g.items.filter(i => i.on).map(i => ({ key: i.key, id: i.patternId, label: i.label, cls: 'text-plan-smc', swatch: i.swatch,
       off: () => update({ levelOverrides: { ...prefs.levelOverrides, [i.key]: false }, preset: null }) }))),
   ]
   const chips = [...new Map(allChips.map(c => [c.key, c])).values()]
@@ -211,50 +224,22 @@ export default function StockDetail() {
           {rs && rs.label !== 'n/a' && <span className={`chip bg-panel-3 ${rs.label === 'leader' ? 'text-bull' : rs.label === 'laggard' ? 'text-bear' : 'text-muted'}`} title={rs.text}>
             {rs.label.toUpperCase()} {rs.vs_aspi['60'] != null ? `${rs.vs_aspi['60'] >= 0 ? '+' : ''}${rs.vs_aspi['60']} vs ASPI 60d` : ''}</span>}
         </div>
-        <div className="flex items-baseline gap-3 num">
+        <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 num">
           <b className="text-[20px] text-fg">{fmt(price)}</b>
           {chg != null && <span className={`text-[13px] ${chg >= 0 ? 'text-bull' : 'text-bear'}`}>{chg >= 0 ? '▲ +' : '▼ '}{chg.toFixed(2)}%</span>}
           {quote && <span className="text-[11px] text-muted">VOL <span className="text-fg">{quote.volume?.toLocaleString()}</span> · LAST {quote.last_trade}</span>}
           <span className={`chip ${open ? 'bg-bull text-black' : 'bg-panel-3 text-muted'}`}>{open ? 'LIVE' : 'CLOSED'}</span>
+          <button className="chip border border-amber/60 text-amber hover:bg-amber hover:text-black" onClick={() => setAlertDlg(true)} title="Set a price, volume, pattern or news alert on this stock">
+            + Alert{counts.alerts > 0 && <b className="ml-0.5">{counts.alerts}</b>}
+          </button>
+          <button className="chip border border-line text-fg hover:bg-panel-3" onClick={() => setQuery({ tab: 'note' })} title="Your notes on this stock">
+            Notes{counts.notes > 0 && <b className="ml-0.5 text-amber">{counts.notes}</b>}
+          </button>
         </div>
         {eng && <div className="ml-auto flex items-center gap-2 text-[11px]"><AgreeBadge a={eng.agreement} /><span className="hidden text-muted md:inline">{intra ? `${TF_LABEL[tf]} bar ${a?.time ?? ''}` : `${a?.date} close`}</span></div>}
       </header>
 
-      {/* toolbar */}
-      <div className="mb-2 flex flex-wrap items-center gap-1">
-        <button className="btn btn-menu" onClick={() => setDrawer(!drawer)} aria-expanded={drawer} title="Patterns & layers (P)">
-          <span className="key">1)</span>Patterns & layers <span className="bg-black/30 px-1 num">{drawnCount}/{(a?.patterns.length ?? 0)}</span>
-        </button>
-        <button className="btn btn-menu" disabled={busy} onClick={async () => { setBusy(true); try { await api.reanalyze(symbol); await Promise.all([loadAnalysis(), loadIntraday()]) } finally { setBusy(false) } }}>
-          <span className="key">2)</span>{busy ? 'Analysing…' : 'Re-analyse'}
-        </button>
-        <div className="flex" role="radiogroup" aria-label="Timeframe">
-          <span className="btn btn-menu !pr-1.5"><span className="key">3)</span></span>
-          {TIMEFRAMES.map(t => <button key={t} role="radio" aria-checked={tf === t} className="btn !border-l-0 !px-2" onClick={() => setTf(t)}>{TF_LABEL[t]}</button>)}
-        </div>
-        <div className="flex" role="radiogroup" aria-label="Chart style">
-          <span className="btn btn-menu !pr-1.5"><span className="key">4)</span></span>
-          {(['candles', 'line'] as const).map(c => <button key={c} role="radio" aria-checked={prefs.chartStyle === c} className="btn !border-l-0 !px-2" title={c === 'line' ? 'Close-price line: easier to see the trend' : 'Candlesticks'}
-                                                  onClick={() => update({ chartStyle: c })}>{c === 'line' ? 'Line' : 'Candles'}</button>)}
-          <button className="btn !border-l-0 !px-2" aria-pressed={prefs.layers.zigzag} title="Zig-zag swings: a line through the swing highs and lows (a move of 2 × ATR turns it)"
-                  onClick={() => update({ layers: { ...prefs.layers, zigzag: !prefs.layers.zigzag }, preset: null })}>Zig-zag {prefs.layers.zigzag ? 'ON' : 'OFF'}</button>
-        </div>
-        <div className="flex" role="group" aria-label="Engines shown on the chart"
-             title="Choose whose drawings are on the chart. Click an engine to switch it on or off; double-click to show only that engine.">
-          <span className="btn btn-menu !pr-1.5"><span className="key">5)</span>Show</span>
-          {([['original', 'CLS'], ['analyst', 'LVL'], ['smc', 'SMC']] as const).map(([e, label]) => (
-            <button key={e} className="btn !border-l-0 !px-2" aria-pressed={mask[e]}
-                    onClick={() => update({ engines: { ...mask, [e]: !mask[e] }, preset: null })}
-                    onDoubleClick={() => update({ engines: { original: e === 'original', analyst: e === 'analyst', smc: e === 'smc' }, preset: null })}>{label}</button>
-          ))}
-        </div>
-        {(candles?.events?.length ?? 0) > 0 && (
-          <button className="btn btn-menu" aria-pressed={raw} onClick={() => setRaw(r => !r)} title="Prices exactly as traded, without the rights/split adjustment (drawings hidden)">
-            <span className="key">6)</span>Raw prices {raw ? 'ON' : 'OFF'}
-          </button>
-        )}
-        <span className="ml-auto hidden text-[11px] text-muted lg:inline">P = patterns · type <b className="text-yellow">CMP &lt;GO&gt;</b>, <b className="text-yellow">SMC &lt;GO&gt;</b>, <b className="text-yellow">DES &lt;GO&gt;</b></span>
-      </div>
+      <div className="card mb-2"><StockStats symbol={symbol} price={price} /></div>
 
       {/* intraday: data coverage and what this verdict is */}
       {intra && (
@@ -294,6 +279,42 @@ export default function StockDetail() {
         </div>
       )}
 
+      {/* toolbar: directly above the chart, so the timeframe and layer buttons are never a scroll away from it */}
+      <div className="mb-2 flex flex-wrap items-center gap-1">
+        <button className="btn btn-menu" onClick={() => setDrawer(!drawer)} aria-expanded={drawer} title="Patterns & layers (P)">
+          <span className="key">1)</span>Patterns & layers <span className="bg-black/30 px-1 num">{drawnCount}/{(a?.patterns.length ?? 0)}</span>
+        </button>
+        <button className="btn btn-menu" disabled={busy} onClick={async () => { setBusy(true); try { await api.reanalyze(symbol); await Promise.all([loadAnalysis(), loadIntraday()]) } finally { setBusy(false) } }}>
+          <span className="key">2)</span>{busy ? 'Analysing…' : 'Re-analyse'}
+        </button>
+        <div className="flex" role="radiogroup" aria-label="Timeframe">
+          <span className="btn btn-menu !pr-1.5"><span className="key">3)</span></span>
+          {TIMEFRAMES.map(t => <button key={t} role="radio" aria-checked={tf === t} className="btn !border-l-0 !px-2" onClick={() => setTf(t)}>{TF_LABEL[t]}</button>)}
+        </div>
+        <div className="flex" role="radiogroup" aria-label="Chart style">
+          <span className="btn btn-menu !pr-1.5"><span className="key">4)</span></span>
+          {(['candles', 'line'] as const).map(c => <button key={c} role="radio" aria-checked={prefs.chartStyle === c} className="btn !border-l-0 !px-2" title={c === 'line' ? 'Close-price line: easier to see the trend' : 'Candlesticks'}
+                                                  onClick={() => update({ chartStyle: c })}>{c === 'line' ? 'Line' : 'Candles'}</button>)}
+          <button className="btn !border-l-0 !px-2" aria-pressed={prefs.layers.zigzag} title="Zig-zag swings: a line through the swing highs and lows (a move of 2 × ATR turns it)"
+                  onClick={() => update({ layers: { ...prefs.layers, zigzag: !prefs.layers.zigzag }, preset: null })}>Zig-zag {prefs.layers.zigzag ? 'ON' : 'OFF'}</button>
+        </div>
+        <div className="flex" role="group" aria-label="Engines shown on the chart"
+             title="Choose whose drawings are on the chart. Click an engine to switch it on or off; double-click to show only that engine.">
+          <span className="btn btn-menu !pr-1.5"><span className="key">5)</span>Show</span>
+          {([['original', 'CLS'], ['analyst', 'LVL'], ['smc', 'SMC']] as const).map(([e, label]) => (
+            <button key={e} className="btn !border-l-0 !px-2" aria-pressed={mask[e]}
+                    onClick={() => update({ engines: { ...mask, [e]: !mask[e] }, preset: null })}
+                    onDoubleClick={() => update({ engines: { original: e === 'original', analyst: e === 'analyst', smc: e === 'smc' }, preset: null })}>{label}</button>
+          ))}
+        </div>
+        {(candles?.events?.length ?? 0) > 0 && (
+          <button className="btn btn-menu" aria-pressed={raw} onClick={() => setRaw(r => !r)} title="Prices exactly as traded, without the rights/split adjustment (drawings hidden)">
+            <span className="key">6)</span>Raw prices {raw ? 'ON' : 'OFF'}
+          </button>
+        )}
+        <span className="ml-auto hidden text-[11px] text-muted lg:inline">P = patterns · type <b className="text-yellow">CMP &lt;GO&gt;</b>, <b className="text-yellow">SMC &lt;GO&gt;</b>, <b className="text-yellow">DES &lt;GO&gt;</b></span>
+      </div>
+
       {/* chart */}
       <section className="card">
         <div ref={chipStrip} className="scroll-thin flex cursor-grab items-center gap-1 overflow-x-auto border-b border-line px-2 py-1" title="Scroll with the mouse wheel or drag sideways">
@@ -301,6 +322,7 @@ export default function StockDetail() {
           {chips.length === 0 && <span className="text-[11px] text-muted">nothing drawn; open 1) Patterns & layers</span>}
           {chips.map(c => (
             <span key={c.key} className={`chip shrink-0 border border-line bg-panel-2 !normal-case !font-medium ${c.cls}`}>
+              {c.swatch && <SmcSwatch kind={c.swatch.kind} dir={c.swatch.dir} faded={c.swatch.faded} />}
               <button className="max-w-[180px] truncate" onClick={() => c.id && selectPattern(c.id === selected ? null : c.id)} title={c.label}>{c.label}</button>
               <button className="text-muted hover:text-bear" onClick={c.off} aria-label={`Hide ${c.label}`}>✕</button>
             </span>
@@ -312,6 +334,7 @@ export default function StockDetail() {
                                  onSelect={selectPattern} quote={tf === '1D' || intra ? quote : null} focus={focus}
                                  planEngine={prefs.planEngine} levelOverrides={prefs.levelOverrides} chartStyle={prefs.chartStyle} engineMask={mask} /> : <Spinner label="Loading chart…" />}
         </div>
+        {chips.some(c => c.swatch) && <SmcKey />}
       </section>
 
       {sel && (
@@ -349,9 +372,12 @@ export default function StockDetail() {
                                                   : <p className="text-[12px] text-muted">No {TF_LABEL[tf]} analysis yet (see above). Switch to 1D for the nightly analysis.</p>)
           : tab === 'des' ? <FundamentalsTab symbol={symbol} onSaved={loadAnalysis} />
           : tab === 'liq' ? <LiquidityTab a={daily} />
+          : tab === 'note' ? <div className="card"><NotesPanel symbol={symbol} onLoaded={r => setCounts(c => c.notes === r.length ? c : { ...c, notes: r.length })} /></div>
           : tab === 'cacs' ? <CorporatePanel symbol={symbol} a={daily} onChanged={() => { loadAnalysis(); loadIntraday(); loadCandles() }} />
           : <CatalystsTab symbol={symbol} />}
       </div>
+
+      {alertDlg && <AlertDialog symbol={symbol} price={price ?? null} onClose={() => setAlertDlg(false)} onChanged={loadCounts} />}
 
       {drawer && a && (
         <PatternDrawer a={a} prefs={prefs} update={update} applyPreset={applyPreset} saveAsDefault={saveAsDefault} loadMyDefault={loadMyDefault}

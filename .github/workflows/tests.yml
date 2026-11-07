@@ -31,9 +31,10 @@ jobs:
           node-version: 24
           cache: npm
           cache-dependency-path: frontend/package-lock.json
-      - name: Install, test and build
+      - name: Install, lint, test and build
         working-directory: frontend
         run: |
           npm ci
+          npm run lint        # warnings are listed; only errors fail the run
           npm test
-          npm run build
+          npm run build       # includes the TypeScript check (tsc -b)

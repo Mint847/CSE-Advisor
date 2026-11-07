@@ -231,10 +231,30 @@ export interface WatchList { id: number; name: string; count: number }
 export interface ListsInfo { lists: WatchList[]; portfolio: number; max_lists: number }
 export interface AllStock {
   symbol: string; name: string; price: number | null; change_pct: number | null; volume: number | null; turnover: number | null
-  trades: number | null; market_cap: number | null; traded: string | null
+  trades: number | null; market_cap: number | null; traded: string | null; sector?: string | null; industry?: string | null
   lists: number[]; held: boolean; candidate: { qualifies: boolean; hits: number; rs_rank: number | null } | null
 }
+export interface HeatStock { symbol: string; name: string; price: number; change_pct: number; turnover: number; market_cap: number; sector: string; industry: string | null; mine: boolean }
+export interface Heatmap { stocks: HeatStock[]; meta_age_days: number | null; indices: { code: string; name: string; change_pct: number | null; value: number | null }[]; indices_date: string | null }
+export interface FeedItem { type: 'announcement' | 'headline'; id: string; at: string | null; title: string; source: string; symbols: string[]; category: string | null; tone: number | null; importance: number | null; link: string | null; detail: string | null }
+export interface Feed { count: number; items: FeedItem[]; names: Record<string, string> }
+export interface CalEvent { symbol: string; date: string; kind: string; title: string; detail: string; days: number; mine: boolean }
+export interface Calendar { today: string; events: CalEvent[]; names: Record<string, string> }
+export interface KeyStats {
+  price: number | null; prev_close: number | null; day_low: number | null; day_high: number | null; hi_52w: number | null; lo_52w: number | null; pos_52w: number | null
+  pct_from_high: number | null; hi_ytd: number | null; lo_ytd: number | null; hi_all: number | null; lo_all: number | null; volume_ytd: number | null; volume_12m: number | null
+  turnover_ytd: number | null; market_cap: number | null; market_cap_pct: number | null; foreign_pct: number | null; shares_issued: number | null; par: number | null
+  sector: string | null; industry: string | null; isin: string | null
+}
+export interface QuoteCard { quote: AllStock; stats: KeyStats; lists: number[]; held: boolean; tracked: boolean }
 export interface AllStocksData { lists: WatchList[]; count: number; rows: AllStock[] }
+export interface HealthSource { key: string; label: string; as_of: string | null; stale: boolean; kind: 'session' | 'days' | 'time' }
+export interface StepResult { ok: boolean; s?: number; error?: string; n?: number; failed?: Record<string, string>; failed_feeds?: string[] }
+export interface Health {
+  status: 'ok' | 'partial' | 'stale' | 'failed'; session: string; expected: string; running: boolean; stale: string[]; sources: HealthSource[]
+  run: { run_date: string | null; ok: boolean; at: string | null; late: boolean; attempts: number; failed_steps: string[]; analysed?: number | null
+    steps?: Record<string, StepResult>; errors?: Record<string, string> | null; late_note?: string | null; message?: string | null }
+}
 export interface Overnight { notes: { series: string; text: string }[]; note: string }
 export interface Regime { state: 'risk_on' | 'risk_off' | 'mixed' | 'unknown'; label?: string; text: string; facts: string[]; note?: string; breadth?: number | null; overnight?: Overnight | null }
 export interface WorldSeries {
@@ -255,6 +275,12 @@ export interface CatalogEntry { name: string; tier: number; enabled: boolean; ba
 let writesInFlight = 0
 export const hasUnsyncedChanges = () => writesInFlight > 0
 
+export interface AlertRule { id: number; symbol: string; kind: string; params: Record<string, number | string>; text: string; active: boolean; once: boolean; created_at: string; last_fired: string | null; fired_count: number }
+export interface AlertKind { label: string; when: 'live' | 'eod'; fields: Record<string, string> }
+export interface InboxEvent { id: number; symbol: string | null; kind: string; text: string; read: boolean; alert_id: number | null; at: string }
+export interface Inbox { unread: number; events: InboxEvent[] }
+export interface NoteRow { id: number; symbol: string | null; position_id: number | null; body: string; tags: string[]; pinned: boolean; created_at: string; updated_at: string }
+
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
   const write = !!init?.method && init.method !== 'GET'
   if (write) writesInFlight++
@@ -271,16 +297,22 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
   }
 }
 
+/** Fired after a stock is added or removed, so anything holding the tracked-stock list can refresh it. */
+export const WATCH_CHANGED = 'cse:watchlist-changed'
+export const INBOX_CHANGED = 'cse:inbox-changed'
+const inboxChanged = <T,>(p: Promise<T>) => p.then(r => { window.dispatchEvent(new Event(INBOX_CHANGED)); return r })
+const changed = <T,>(p: Promise<T>) => p.then(r => { window.dispatchEvent(new Event(WATCH_CHANGED)); return r })
+
 export const api = {
   /** Every stock tracked; or one list (its id), or 'portfolio' (stocks with an open position). */
   watchlist: (list?: number | 'portfolio') => req<WatchItem[]>(`/api/watchlist${list != null ? `?list=${list}` : ''}`),
-  addStock: (query: string, listId?: number) => req<{ symbol: string }>('/api/watchlist', { method: 'POST', body: JSON.stringify({ query, list_id: listId ?? null }) }),
+  addStock: (query: string, listId?: number) => changed(req<{ symbol: string }>('/api/watchlist', { method: 'POST', body: JSON.stringify({ query, list_id: listId ?? null }) })),
   /** Off one list (it stops being tracked when that was its last list), or off every list. */
-  removeStock: (s: string, listId?: number) => req<{ removed: string; untracked: boolean }>(`/api/watchlist/${s}${listId != null ? `?list=${listId}` : ''}`, { method: 'DELETE' }),
+  removeStock: (s: string, listId?: number) => changed(req<{ removed: string; untracked: boolean }>(`/api/watchlist/${s}${listId != null ? `?list=${listId}` : ''}`, { method: 'DELETE' })),
   lists: () => req<ListsInfo>('/api/lists'),
   createList: (name: string) => req<{ id: number; name: string }>('/api/lists', { method: 'POST', body: JSON.stringify({ name }) }),
   renameList: (id: number, name: string) => req<{ id: number; name: string }>(`/api/lists/${id}`, { method: 'PUT', body: JSON.stringify({ name }) }),
-  deleteList: (id: number) => req<{ ok: boolean; untracked: string[] }>(`/api/lists/${id}`, { method: 'DELETE' }),
+  deleteList: (id: number) => changed(req<{ ok: boolean; untracked: string[] }>(`/api/lists/${id}`, { method: 'DELETE' })),
   allStocks: () => req<AllStocksData>('/api/stocks/all'),
   candles: (s: string, tf: string, raw = false) => req<Candles>(`/api/stocks/${s}/candles?tf=${tf}${raw ? '&raw=true' : ''}`),
   corporateActions: (s: string) => req<CorpAction[]>(`/api/stocks/${s}/corporate-actions`),
@@ -309,8 +341,32 @@ export const api = {
   journal: () => req<JournalData>('/api/journal'),
   regime: () => req<Regime>('/api/regime'),
   world: () => req<World>('/api/world'),
+  health: () => req<Health>('/api/health'),
   addPosition: (p: Partial<PositionRow>) => req('/api/positions', { method: 'POST', body: JSON.stringify(p) }),
-  closePosition: (id: number, exit_date: string, exit_price: number) => req(`/api/positions/${id}/close`, { method: 'POST', body: JSON.stringify({ exit_date, exit_price }) }),
+  closePosition: (id: number, exit_date: string, exit_price: number, review?: string) => req(`/api/positions/${id}/close`, { method: 'POST', body: JSON.stringify({ exit_date, exit_price, review: review || null }) }),
+  heatmap: () => req<Heatmap>('/api/heatmap'),
+  feed: (f: { scope: string; kind: string; tone: string; q: string; days: number; symbol?: string }) => {
+    const sp = new URLSearchParams({ scope: f.scope, kind: f.kind, tone: f.tone, q: f.q, days: String(f.days) }); if (f.symbol) sp.set('symbol', f.symbol)
+    return req<Feed>(`/api/feed?${sp}`)
+  },
+  calendar: (scope: string, days = 90) => req<Calendar>(`/api/calendar?scope=${scope}&days=${days}`),
+  stats: (s: string, price?: number | null) => req<KeyStats>(`/api/stocks/${s}/stats${price != null ? `?price=${price}` : ''}`),
+  quoteCard: (s: string) => req<QuoteCard>(`/api/quote/${encodeURIComponent(s)}`),
+  listed: () => req<{ symbol: string; name: string }[]>('/api/listed'),
+  alerts: () => req<{ rules: AlertRule[]; kinds: Record<string, AlertKind> }>('/api/alerts'),
+  addAlert: (a: { symbol: string; kind: string; params: Record<string, number | string>; once: boolean }) => req<AlertRule>('/api/alerts', { method: 'POST', body: JSON.stringify(a) }),
+  editAlert: (id: number, a: { active?: boolean; once?: boolean; params?: Record<string, number | string> }) => req<AlertRule>(`/api/alerts/${id}`, { method: 'PUT', body: JSON.stringify(a) }),
+  deleteAlert: (id: number) => req(`/api/alerts/${id}`, { method: 'DELETE' }),
+  inbox: (limit = 60) => req<Inbox>(`/api/alerts/inbox?limit=${limit}`),
+  markRead: (ids?: number[]) => inboxChanged(req('/api/alerts/read', { method: 'POST', body: JSON.stringify({ ids: ids ?? null }) })),
+  clearInbox: () => inboxChanged(req<{ removed: number }>('/api/alerts/clear', { method: 'POST' })),
+  notes: (f: { symbol?: string; position_id?: number; tag?: string; q?: string; limit?: number } = {}) => {
+    const sp = new URLSearchParams(); Object.entries(f).forEach(([k, v]) => { if (v != null && v !== '') sp.set(k, String(v)) })
+    return req<NoteRow[]>(`/api/notes${sp.size ? `?${sp}` : ''}`)
+  },
+  addNote: (n: { body: string; symbol?: string | null; position_id?: number | null; tags?: string[]; pinned?: boolean }) => req<NoteRow>('/api/notes', { method: 'POST', body: JSON.stringify(n) }),
+  editNote: (id: number, n: { body?: string; tags?: string[]; pinned?: boolean }) => req<NoteRow>(`/api/notes/${id}`, { method: 'PUT', body: JSON.stringify(n) }),
+  deleteNote: (id: number) => req(`/api/notes/${id}`, { method: 'DELETE' }),
   deletePosition: (id: number) => req(`/api/positions/${id}`, { method: 'DELETE' }),
   catalog: () => req<{ patterns: Record<string, CatalogEntry>; default_display: string }>('/api/catalog'),
   getPref: <T,>(k: string) => req<T | null>(`/api/prefs/${encodeURIComponent(k)}`),

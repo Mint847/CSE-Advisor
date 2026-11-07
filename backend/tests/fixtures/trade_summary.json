@@ -1,0 +1,12 @@
+[
+  {"id": 204, "name": "ABANS ELECTRICALS PLC", "symbol": "ABAN.N0000", "logoUrl": "upload_logo/642_1603172106.jpeg",
+   "quantity": 2, "percentageChange": 1.1221945137157108, "change": 11.25, "price": 1013.75, "previousClose": 1002.5, "high": 1044.0,
+   "low": 1002.5, "lastTradedTime": 1793868917173, "issueDate": "01/JAN/1984", "turnover": 947959.25, "sharevolume": 930,
+   "tradevolume": 56, "marketCap": 5180830200.0, "marketCapPercentage": 0.0, "open": 1025.25, "closingPrice": 1013.75,
+   "crossingVolume": 930, "crossingTradeVol": 56, "status": 0},
+  {"id": 311, "name": "JOHN KEELLS HOLDINGS PLC", "symbol": "JKH.N0000", "quantity": 100, "percentageChange": -0.53, "change": -0.1,
+   "price": 18.8, "previousClose": 18.9, "high": 19.0, "low": 18.7, "lastTradedTime": 1793868000000, "turnover": 3000000.0,
+   "sharevolume": 160000, "tradevolume": 372, "marketCap": 1.0, "open": null, "closingPrice": 18.8, "crossingVolume": 0, "status": 0},
+  {"id": 999, "name": "NEVER TRADED PLC", "symbol": "NTRD.N0000", "quantity": 0, "percentageChange": 0, "change": 0,
+   "price": 0, "previousClose": 5.0, "high": 0, "low": 0, "lastTradedTime": 0, "turnover": 0, "sharevolume": 0, "tradevolume": 0, "open": 0}
+]

@@ -64,7 +64,6 @@ class LiveQuotes:
         self.version = 0
         self.updated: datetime | None = None
         self.subscribers = 0
-        self._alerted: set[tuple[str, str, str]] = set()
         self._event = asyncio.Event()
         self.movers: dict[str, Any] = {}
         self._movers_at = 0.0
@@ -106,12 +105,12 @@ class LiveQuotes:
         self.updated = now_local()
 
     async def run(self) -> None:
-        from . import telegram_bot
+        from . import alerts, telegram_bot
         poll = settings()["market"]["live_poll_seconds"]
         while True:
             try:
                 stale = self.updated is None or (now_local() - self.updated).total_seconds() > poll
-                alerts_on = settings()["telegram"]["intraday_level_alerts"] and telegram_bot.enabled()
+                alerts_on = bool(settings()["telegram"]["intraday_level_alerts"] and telegram_bot.enabled())                     or await asyncio.to_thread(alerts.has_live_rules)
                 is_open = await asyncio.to_thread(market_open)
                 if (self.subscribers > 0 or alerts_on) and stale and (is_open or self.updated is None):
                     await asyncio.to_thread(self._fetch)
@@ -131,17 +130,24 @@ class LiveQuotes:
             return False
 
     def check_level_alerts(self) -> None:
-        from . import telegram_bot
-        if not telegram_bot.enabled():
+        """After each quote refresh: the accounts' own price rules, then the engines' levels for the Telegram owner's
+        stocks (stop, target, trigger, buy zone). Both go to the inbox once a day (remembered in the database, so a
+        restart doesn't repeat them); the owner's also go to Telegram when it is set up."""
+        from . import accounts, alerts, telegram_bot
+        today = now_local().date()
+        try:
+            alerts.evaluate_quotes(self.quotes, today)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("user alerts failed: %s", exc)
+        if not settings()["telegram"]["intraday_level_alerts"]:
             return
-        today = str(now_local().date())
-        from . import accounts
+        day = str(today)
         with SessionLocal() as s:
             owner = accounts.telegram_owner(s)            # Telegram has one chat: its owner's stocks
             for sym in sorted(accounts.user_symbols(s, owner)):
                 q = self.quotes.get(sym)
                 a = accounts.latest_view(s, owner, sym)
-                if not q or not a or q["time"] != today:
+                if not q or not a or q["time"] != day:
                     continue
                 price = q["close"]
                 ro, ra = split_engines(a.recommendation)
@@ -167,9 +173,7 @@ class LiveQuotes:
                         if verdict == "BUY" and zl <= price <= zh:
                             msgs.append((f"zone_{tag}", f"🟢 [{tag}] {sym} at {price:,.2f} is inside the buy zone {zl:,.2f}–{zh:,.2f} (limit {plan['ideal']:,.2f})"))
                 for kind, text in msgs:
-                    key = (sym, kind, today)
-                    if key not in self._alerted:
-                        self._alerted.add(key)
+                    if alerts.engine_event(owner, sym, kind, text, day) and telegram_bot.enabled():
                         telegram_bot.send_text(text)
 
 

@@ -14,6 +14,7 @@ from typing import Any
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
+from apscheduler.triggers.interval import IntervalTrigger
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -22,12 +23,12 @@ from sqlalchemy import func, select
 
 from .strategy.recommend import plan_summary, split_engines
 from . import engine as eng
-from . import accounts, auth, ingest, jobs, journal, portfolio, screener, telegram_bot
+from . import accounts, alerts_api, auth, market_api, ingest, jobs, journal, portfolio, screener, telegram_bot
 from .auth import User, current_user, require_admin
 from .config import FRONTEND_DIST, env, pattern_catalog, settings
 from .cse_client import CDN
 from .db import (
-    Analysis, Announcement, CorporateAction, FinancialReport, Fundamental, JobRun, MarketDaily, Position, Preference, PriceDaily,
+    Analysis, Announcement, CorporateAction, FinancialReport, Fundamental, JobRun, MarketDaily, Note, Position, Preference, PriceDaily,
     SessionLocal, Security, WatchlistItem, init_db,
 )
 from .db import LOCAL_UID
@@ -45,7 +46,11 @@ async def lifespan(_: FastAPI):
     hh, mm = map(int, settings()["market"]["eod_job_time"].split(":"))
     sched = BackgroundScheduler(timezone=tz)
     sched.add_job(jobs.run_eod, CronTrigger(day_of_week="mon-fri", hour=hh, minute=mm, timezone=tz), id="eod",
-                  misfire_grace_time=3 * 3600, coalesce=True)
+                  misfire_grace_time=24 * 3600, coalesce=True)
+    # the watchdog: a PC that slept through the run (or an app that was off) catches up as soon as it is awake. No misfire
+    # limit, so after a sleep it fires at once instead of being dropped as late.
+    sched.add_job(jobs.ensure_fresh, IntervalTrigger(minutes=jobs.CHECK_MINUTES, timezone=tz), id="eod_watchdog", coalesce=True,
+                  max_instances=1, misfire_grace_time=None)
     sched.start()
     threading.Thread(target=jobs.startup_catch_up, daemon=True, name="catch-up").start()
     tg_stop = telegram_bot.start_polling()
@@ -58,6 +63,8 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(title="CSE Advisor", lifespan=lifespan)
+app.include_router(alerts_api.router)         # alerts, inbox, notes
+app.include_router(market_api.router)         # heatmap, news feed, calendar, key stats, quote card
 
 PUBLIC_API = {"/api/auth/config"}
 
@@ -336,7 +343,11 @@ def all_stocks(u: User = Depends(current_user)) -> dict[str, Any]:
         lists = accounts.symbol_lists(s, u.uid)
         held = set(accounts.held_symbols(s, u.uid))
         overview = accounts.lists_overview(s, u.uid)
-    rows = [{**r, "lists": lists.get(r["symbol"], []), "held": r["symbol"] in held,
+    with SessionLocal() as s:
+        from . import listed_meta
+        kinds = listed_meta.lookup(s)
+    rows = [{**r, "sector": kinds.get(r["symbol"], {}).get("sector"), "industry": kinds.get(r["symbol"], {}).get("industry"),
+             "lists": lists.get(r["symbol"], []), "held": r["symbol"] in held,
              "candidate": ({"qualifies": cand[r["symbol"]]["qualifies"], "hits": cand[r["symbol"]]["hits"], "rs_rank": cand[r["symbol"]]["rs_rank"]}
                            if r["symbol"] in cand else None)} for r in listed]
     return {"lists": overview, "count": len(rows), "rows": rows}
@@ -847,6 +858,7 @@ class PositionIn(BaseModel):
 class PositionClose(BaseModel):
     exit_date: date
     exit_price: float
+    review: str | None = None          # optional "what went right / wrong", saved as a note tagged review
 
 
 @app.get("/api/positions")
@@ -861,8 +873,10 @@ def portfolio_view(u: User = Depends(current_user)) -> dict[str, Any]:
     rows = _positions(u.uid)
     with SessionLocal() as s:
         sectors = {x.symbol: x.sector for x in s.scalars(select(Security))}
+        from . import listed_meta
+        kinds = listed_meta.lookup(s)
     for p in rows:
-        p["sector"] = sectors.get(p["symbol"])
+        p["sector"] = sectors.get(p["symbol"]) or kinds.get(p["symbol"], {}).get("sector")      # CSE index code, else TradingView's sector
         p["stop_used"] = p.get("stop") or ((p.get("review") or {}).get("suggested_stop"))
     return eng._jsonable(portfolio.summarize(rows, settings()["risk"].get("capital_lkr"), settings()["costs"]["brokerage_pct_per_side"]))
 
@@ -932,6 +946,8 @@ def close_position(pid: int, c: PositionClose, u: User = Depends(current_user)) 
         p = _own_position(s, u, pid)
         p.closed, p.exit_date, p.exit_price = True, c.exit_date, c.exit_price
         sym = p.symbol
+        if c.review and c.review.strip():            # "what went right / wrong" becomes a note tagged review
+            s.add(Note(user_id=u.uid, symbol=sym, position_id=p.id, body=c.review.strip()[:alerts_api.MAX_BODY], tags=["review"]))
     with SessionLocal.begin() as s:
         accounts.refresh_review(s, u.uid, sym)
     return {"ok": True}
@@ -942,6 +958,8 @@ def delete_position(pid: int, u: User = Depends(current_user)) -> dict[str, Any]
     with SessionLocal.begin() as s:
         p = _own_position(s, u, pid)
         sym = p.symbol
+        for n in s.scalars(select(Note).where(Note.user_id == u.uid, Note.position_id == p.id)):
+            n.position_id = None                     # the notes stay, on the stock
         s.delete(p)
     with SessionLocal.begin() as s:   # drop (or redo) the position review now, not at the next evening run
         accounts.refresh_review(s, u.uid, sym)
@@ -979,6 +997,17 @@ async def put_pref(key: str, request: Request, u: User = Depends(current_user)) 
 def trigger_eod(_: User = Depends(require_admin)) -> dict[str, Any]:
     threading.Thread(target=jobs.run_eod, kwargs={"notify": True}, daemon=True).start()
     return {"started": True}
+
+
+@app.get("/api/health")
+def data_health(u: User = Depends(current_user)) -> dict[str, Any]:
+    """Is the data current? As-of dates per source against the last finished session, the last evening run and which of its
+    steps failed. Anyone signed in sees the state; only the admin sees the details."""
+    from . import health
+    from .cse_client import now_local
+    now = now_local().replace(tzinfo=None)
+    with SessionLocal() as s:
+        return eng._jsonable(health.health(s, now, jobs.last_trading_day(now_local()), running=jobs._lock.locked(), admin=u.admin))
 
 
 @app.get("/api/status")

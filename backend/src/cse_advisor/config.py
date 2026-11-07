@@ -11,10 +11,12 @@ from dotenv import load_dotenv
 
 BACKEND_DIR = Path(__file__).resolve().parents[2]
 CONFIG_DIR = BACKEND_DIR / "config"
-DATA_DIR = BACKEND_DIR / "data"
 FRONTEND_DIST = BACKEND_DIR.parent / "frontend" / "dist"
 
 load_dotenv(BACKEND_DIR / ".env")
+# The database, its backups and the study cache. CSE_DATA_DIR (in backend/.env) puts them somewhere other than the
+# project folder, e.g. out of OneDrive, which must not sync a live database (python -m cse_advisor.tools.move_data).
+DATA_DIR = Path(os.getenv("CSE_DATA_DIR") or BACKEND_DIR / "data")
 
 
 def _load_yaml(name: str) -> dict[str, Any]:
