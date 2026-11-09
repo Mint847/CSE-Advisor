@@ -451,14 +451,27 @@ def chart_data(s: Session, symbol: str, timeframe: str = "1D", adjusted: bool = 
         events = [{**e, "time": tkey(raw.index[raw.index.searchsorted(pd.Timestamp(e["time"]))])}
                   for e in events if pd.Timestamp(e["time"]) >= first and raw.index.searchsorted(pd.Timestamp(e["time"])) < len(raw)]
     elif timeframe == "1W":
-        g = raw.resample("W-FRI")
-        wk = pd.DataFrame({"open": g["open"].first(), "high": g["high"].max(), "low": g["low"].min(),
-                           "close": g["close"].last(), "volume": g["volume"].sum(), "turnover": g["turnover"].sum(min_count=1)}).dropna(subset=["close"])
-        # label each weekly bar with its first trading day so daily-dated drawings snap into it
-        first_day = raw.index.to_series().resample("W-FRI").first().dropna()
-        wk.index = pd.DatetimeIndex(first_day.loc[wk.index].values)
-        wk["open_estimated"] = False
-        raw = wk
+        raw = weekly_bars(raw)
+    return frame_chart(symbol, timeframe, raw, adjusted=adjusted, events=events, coverage=coverage)
+
+
+def weekly_bars(raw: pd.DataFrame) -> pd.DataFrame:
+    """Daily bars to weekly (Mon-Fri), each labelled with its first trading day so daily-dated drawings snap into it."""
+    g = raw.resample("W-FRI")
+    wk = pd.DataFrame({"open": g["open"].first(), "high": g["high"].max(), "low": g["low"].min(),
+                       "close": g["close"].last(), "volume": g["volume"].sum(), "turnover": g["turnover"].sum(min_count=1)}).dropna(subset=["close"])
+    first_day = raw.index.to_series().resample("W-FRI").first().dropna()
+    wk.index = pd.DatetimeIndex(first_day.loc[wk.index].values)
+    wk["open_estimated"] = False
+    return wk
+
+
+def frame_chart(symbol: str, timeframe: str, raw: pd.DataFrame, adjusted: bool = True, events: list[dict[str, Any]] | None = None,
+                coverage: Any = None) -> dict[str, Any]:
+    """The chart payload (bars + indicator lines) for any price frame: a CSE stock or a world stock."""
+    events = events or []
+    if "open_estimated" not in raw:
+        raw = raw.assign(open_estimated=False)
     df = indicators.add_all(raw)
     t = [tkey(d) for d in df.index]
 

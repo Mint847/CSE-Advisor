@@ -115,3 +115,12 @@ macro:                            # world series from TradingView, shown on MKT 
   enabled: true
   shock_us_pct: -2.0              # overnight note when the Nasdaq-100 or S&P 500 closed at least this much down
   shock_oil_pct: 5.0              # ... or Brent moved this much either way
+
+global_stocks:                    # GLB page: world stocks (NVIDIA, SK Hynix...), prices and news from TradingView / Google News
+  enabled: true
+  job_time: "07:00"               # Colombo time, after the US close; caught up hourly if missed
+  move_pct: 4.0                   # a "big move": a close-to-close change of at least this many %
+  move_news_days: 365             # how far back big moves are listed with their headlines
+  move_news_per_night: 3          # older moves whose headlines are searched each night (more are searched when you open a stock)
+  history_bars: 1500              # daily bars fetched the first time (about 6 years)
+  quote_cache_seconds: 120        # the list's quotes are re-read at most this often (TradingView's free feed is delayed 15-20 min)

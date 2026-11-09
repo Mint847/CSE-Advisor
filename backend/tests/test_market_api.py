@@ -183,3 +183,40 @@ def test_company_info_falls_back_to_the_stored_copy_when_the_cse_is_down(S, monk
         s.get(Security, "JKH.N0000").info = {"p12HiPrice": 30.0}
     assert market_api._company_info("JKH.N0000") == {"p12HiPrice": 30.0}
     assert market_api._company_info("NEW.N0000") is None
+
+
+# ---------------------------------------------------------------- compare
+def test_compare_series_of_every_kind(S, monkeypatch):
+    from datetime import date as d_
+    from cse_advisor.db import GlobalPrice, GlobalStock, MacroDaily, MarketDaily
+    with S.begin() as s:
+        for i in range(3):
+            s.add(MarketDaily(date=d_(2026, 11, 2 + i), aspi=21000 + i))
+            s.add(MacroDaily(code="spx", date=d_(2026, 11, 2 + i), close=7000 + i))
+            s.add(GlobalPrice(symbol="NASDAQ:NVDA", date=d_(2026, 11, 2 + i), open=1, high=1, low=1, close=180 + i, volume=1))
+        s.add(GlobalStock(symbol="NASDAQ:NVDA", name="NVIDIA", group="AI & chips", aliases=["Nvidia"]))
+    import pandas as pd
+    monkeypatch.setattr("cse_advisor.engine.load_adjusted", lambda s, sym: (pd.DataFrame({"close": [10.0, 11.0]}, index=pd.to_datetime(["2026-11-02", "2026-11-03"])), []))
+    from cse_advisor import tv_client
+    monkeypatch.setattr(tv_client, "fetch_bars", lambda sym, tf, n, exchange="CSELK": [{"ts": datetime(2026, 11, 2, 9, 30), "close": 5.0}] if sym == "OTHER.N0000" else [])
+    monkeypatch.setattr(market_api, "_TV_CACHE", {})
+    r = market_api.compare("^ASPI,^SPX,NASDAQ:NVDA,JKH.N0000", ME)["series"]
+    assert (r["^ASPI"]["label"], len(r["^ASPI"]["points"]), r["^ASPI"]["points"][-1]) == ("ASPI", 3, {"time": "2026-11-04", "value": 21002})
+    assert r["^SPX"]["label"] == "S&P 500" and r["^SPX"]["points"][0]["value"] == 7000
+    assert r["NASDAQ:NVDA"]["label"] == "NVIDIA" and len(r["NASDAQ:NVDA"]["points"]) == 3
+    assert r["JKH.N0000"] == {"label": "JKH", "points": [{"time": "2026-11-02", "value": 10.0}, {"time": "2026-11-03", "value": 11.0}]}
+    r = market_api.compare("OTHER.N0000,NOPE.N0000,^ASPI,^SPX,^NDX", ME)["series"]
+    assert r["OTHER.N0000"]["points"] == [{"time": "2026-11-02", "value": 5.0}]          # a CSE stock nobody tracks: TradingView
+    assert r["NOPE.N0000"]["error"] == "no data" and "^NDX" not in r                       # at most four
+
+
+def test_compare_options(S):
+    from datetime import date as d_
+    from cse_advisor.db import GlobalStock, MacroDaily
+    with S.begin() as s:
+        s.add(MacroDaily(code="spx", date=d_(2026, 11, 2), close=7000))
+        s.add(GlobalStock(symbol="NASDAQ:NVDA", name="NVIDIA", group="AI & chips", aliases=["Nvidia"]))
+    o = market_api.compare_options(ME)
+    assert [x["id"] for x in o["indices"]] == ["^ASPI", "^SPX"]                            # only series that have data
+    assert o["cse"] == [{"id": "JKH.N0000", "label": "JKH", "name": "JOHN KEELLS HOLDINGS PLC"}]
+    assert o["world"] == [{"id": "NASDAQ:NVDA", "label": "NVDA", "name": "NVIDIA"}]

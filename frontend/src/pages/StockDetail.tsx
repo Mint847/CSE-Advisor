@@ -1,8 +1,11 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Link, useParams, useSearchParams } from 'react-router-dom'
-import { TF_LABEL, TIMEFRAMES, api, engines, fmt, isIntraday, ticker, type Analysis, type Candles, type Coverage, type EngineRec, type LiveOverlay, type LiveStatus, type Timeframe } from '../api'
-import PriceChart, { engineOf, levelPatterns, smcPatterns } from '../chart/PriceChart'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
+import { TF_LABEL, TIMEFRAMES, api, engines, fmt, isIntraday, ticker, type Analysis, type GlobalQuote, type Candles, type Coverage, type EngineRec, type LiveOverlay, type LiveStatus, type Timeframe } from '../api'
+import PriceChart, { COMPARE_COLORS, engineOf, levelPatterns, smcPatterns, type ChartHandle, type CompareLine, type ScaleMode } from '../chart/PriceChart'
+import type { DrawKind } from '../chart/drawings'
+import { CompareLegend, CompareMenu, DrawBar, LayoutsMenu, exportPng, type Layout } from '../components/ChartTools'
 import { AlertDialog } from '../components/AlertForm'
+import WorldNews, { WorldStats } from '../components/WorldNews'
 import { StockStats } from '../components/KeyStats'
 import CorporatePanel from '../components/CorporatePanel'
 import NotesPanel from '../components/NotesPanel'
@@ -13,9 +16,10 @@ import PatternDrawer, { analystGroups, smcGroups, type LevelItem } from '../comp
 import { SmcKey, SmcSwatch } from '../components/SmcSwatch'
 import RecommendationTab, { type RecView } from '../components/RecommendationTab'
 import { AgreeBadge, ENGINE_TEXT, EngineBadge, ErrorBox, Spinner, VerdictBadge } from '../components/ui'
-import { filterPatterns, useCatalog, useStockPrefs } from '../prefs'
+import { filterPatterns, useCatalog, useDrawings, useStockPrefs } from '../prefs'
 import { useHScroll } from '../useHScroll'
 import { useLive } from '../useLive'
+import { useSession } from '../auth/session'
 
 const TABS = [
   { id: 'rec', code: 'REC', label: 'Recommendation' },
@@ -25,7 +29,12 @@ const TABS = [
   { id: 'cacs', code: 'CACS', label: 'Corporate actions & data' },
   { id: 'note', code: 'NOTE', label: 'Notes' },
 ] as const
-type TabId = (typeof TABS)[number]['id']
+/** A world stock (GLB) has no CSE fundamentals, catalysts or corporate actions: its own news tab and the engines. */
+const WORLD_TABS = [
+  { id: 'news', code: 'NEWS', label: 'Moves & headlines' },
+  { id: 'rec', code: 'REC', label: 'Recommendation' },
+] as const
+type TabId = (typeof TABS)[number]['id'] | (typeof WORLD_TABS)[number]['id']
 
 const PANEL_TITLE = { original: 'CLASSIC · patterns + 5-factor score', analyst: 'LEVELS · Fibonacci, zones, level entries',
   smc: 'SMC · order blocks, premium/discount, liquidity' }
@@ -78,7 +87,7 @@ function EnginePanel({ r, engine, onOpen, tfTag, live }: { r: EngineRec | null; 
   )
 }
 
-export default function StockDetail() {
+export default function StockDetail({ world = false }: { world?: boolean } = {}) {
   const { symbol = '' } = useParams()
   const [params, setParams] = useSearchParams()
   const [raw, setRaw] = useState(false)
@@ -94,20 +103,38 @@ export default function StockDetail() {
   const [busy, setBusy] = useState(false)
   const { prefs, update, applyPreset, saveAsDefault, loadMyDefault } = useStockPrefs(symbol)
   const { enabled } = useCatalog()
-  const { quotes, open } = useLive([symbol])
+  const { quotes, open } = useLive(world ? [] : [symbol])        // the CSE quote stream; a world stock polls its delayed quote
   const quote = quotes[symbol] ?? null
   const chipStrip = useHScroll<HTMLDivElement>()
   const [alertDlg, setAlertDlg] = useState(false)
+  const [wq, setWq] = useState<GlobalQuote | null>(null)
+  const dr = useDrawings(symbol)
+  const [tool, setTool] = useState<DrawKind | null>(null)
+  const [drawColor, setDrawColor] = useState('#ffa028')
+  const chartHandle = useRef<ChartHandle | null>(null)
+  const [cmpData, setCmpData] = useState<Record<string, { label: string; points: { time: string; value: number }[]; error?: string }>>({})
+  const order = useRef<string[] | null>(null)                  // the stocks [ and ] step through
+  const go = useNavigate()
+  const isAdmin = useSession().profile?.admin ?? false
+  useEffect(() => {
+    if (!world) return
+    setWq(null)
+    const load = () => api.worldQuote(symbol).then(r => setWq(r.quote)).catch(() => {})
+    load()
+    const t = window.setInterval(load, 120_000)
+    return () => window.clearInterval(t)
+  }, [world, symbol])
   const [counts, setCounts] = useState({ alerts: 0, notes: 0 })
   const loadCounts = useCallback(() => {
-    if (!symbol) return
+    if (!symbol || world) return
     Promise.all([api.alerts().then(d => d.rules.filter(r => r.symbol === symbol && r.active).length), api.notes({ symbol }).then(n => n.length)])
       .then(([alerts, notes]) => setCounts({ alerts, notes })).catch(() => {})
-  }, [symbol])
+  }, [symbol, world])
   useEffect(() => { loadCounts() }, [loadCounts])
 
-  const tabParam = params.get('tab') ?? 'rec'
-  const tab: TabId = (tabParam === 'cmp' || tabParam === 'smc' ? 'rec' : TABS.some(t => t.id === tabParam) ? tabParam : 'rec') as TabId
+  const tabList: readonly { id: TabId; code: string; label: string }[] = world ? WORLD_TABS : TABS
+  const tabParam = params.get('tab') ?? (world ? 'news' : 'rec')
+  const tab: TabId = (tabParam === 'cmp' || tabParam === 'smc' ? 'rec' : tabList.some(t => t.id === tabParam) ? tabParam : tabList[0].id) as TabId
   const view: RecView = tabParam === 'cmp' ? 'compare' : tabParam === 'smc' ? 'smc' : (params.get('view') as RecView) || 'compare'
   const drawer = params.get('pat') === '1'
   const tfParam = params.get('tf') as Timeframe | null
@@ -121,27 +148,36 @@ export default function StockDetail() {
   const setDrawer = (on: boolean) => setQuery({ pat: on ? '1' : null })
   const setTf = (t: Timeframe) => setQuery({ tf: t === '1D' ? null : t })
 
-  const loadAnalysis = useCallback(() => api.analysis(symbol).then(setDaily).catch(e => setErr(String(e.message ?? e))), [symbol])
+  const loadAnalysis = useCallback(() => (world ? api.worldAnalysis(symbol) : api.analysis(symbol)).then(setDaily).catch(e => setErr(String(e.message ?? e))), [symbol, world])
   useEffect(() => { setDaily(null); setErr(null); setSelected(null); loadAnalysis() }, [loadAnalysis])
   // the engines on intraday bars, computed on demand by the backend (cached per completed bar)
   const loadIntraday = useCallback((quiet = false) => {
     if (!intra) return Promise.resolve()
     if (!quiet) setILoading(true)
-    return api.analysis(symbol, tf).then(setIa)
+    return (world ? api.worldAnalysis(symbol, tf) : api.analysis(symbol, tf)).then(setIa)
       .catch(e => setIa({ symbol, tf, error: String(e.message ?? e) } as unknown as Analysis))
       .finally(() => setILoading(false))
-  }, [symbol, tf, intra])
+  }, [symbol, tf, intra, world])
   useEffect(() => { setIa(null); setSelected(null); loadIntraday() }, [loadIntraday])
-  const loadCandles = useCallback(() => api.candles(symbol, tf, raw).then(setCandles).catch(e => setErr(String(e.message ?? e))), [symbol, tf, raw])
+  const cmpIds = useMemo(() => (prefs.compare ?? []).filter(x => x !== symbol).slice(0, 3), [prefs.compare, symbol])
+  useEffect(() => {
+    if (!cmpIds.length) { setCmpData({}); return }
+    let alive = true
+    api.compare(cmpIds).then(r => { if (alive) setCmpData(r.series) }).catch(() => {})
+    return () => { alive = false }
+  }, [cmpIds])
+  const compareLines: CompareLine[] = useMemo(() => tf !== '1D' ? [] : cmpIds.filter(id => cmpData[id]?.points.length)
+    .map(id => ({ id, label: cmpData[id].label, color: COMPARE_COLORS[cmpIds.indexOf(id)], dash: cmpIds.indexOf(id) as 0 | 1 | 2, points: cmpData[id].points })), [cmpIds, cmpData, tf])
+  const loadCandles = useCallback(() => (world ? api.worldCandles(symbol, tf) : api.candles(symbol, tf, raw)).then(setCandles).catch(e => setErr(String(e.message ?? e))), [symbol, tf, raw, world])
   useEffect(() => { loadCandles() }, [loadCandles])
   // the active analysis: the chart timeframe's own on intraday charts, the nightly one on 1D / 1W
   const a: Analysis | null = intra ? (ia && !ia.error ? ia : null) : daily
   // during the session, intraday charts re-read today's trades and re-run the engines once a minute
   useEffect(() => {
-    if (!intra || !open) return
-    const id = window.setInterval(() => { loadCandles(); loadIntraday(true) }, 60_000)
+    if (!intra || !(open || world)) return
+    const id = window.setInterval(() => { loadCandles(); loadIntraday(true) }, world ? 180_000 : 60_000)
     return () => window.clearInterval(id)
-  }, [intra, open, loadCandles, loadIntraday])
+  }, [intra, open, world, loadCandles, loadIntraday])
   const backfill = async () => {
     setBackfilling(true)
     try { await api.backfillIntraday(symbol); await Promise.all([loadCandles(), loadIntraday()]) }
@@ -149,12 +185,36 @@ export default function StockDetail() {
     finally { setBackfilling(false) }
   }
 
-  // P opens the pattern drawer (when not typing)
+  // keys (when not typing): P patterns · 1-7 timeframes · C candles/line · L log scale · [ ] previous / next stock ·
+  // H T B N drawing tools · Esc stop drawing · Delete the selected drawing · Ctrl+Z undo
+  const step = async (dir: 1 | -1) => {
+    if (!order.current) {
+      try { order.current = world ? (await api.globalList()).rows.map(r => r.symbol) : (await api.watchlist()).map(w => w.symbol) } catch { order.current = [] }
+    }
+    const list = order.current
+    if (!list.length) return
+    const i = list.indexOf(symbol)
+    const next = list[(i + dir + list.length) % list.length]
+    go(`${world ? '/global/' + encodeURIComponent(next) : '/stock/' + next}?${params.toString()}`)
+  }
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      const typing = e.target instanceof HTMLElement && e.target.closest('input, textarea, select, [contenteditable="true"]') != null
+      if (typing) return
+      if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === 'z') { e.preventDefault(); dr.undo(); return }
       if (e.ctrlKey || e.metaKey || e.altKey) return
-      const typing = e.target instanceof HTMLElement && e.target.closest('input, textarea, select') != null
-      if (!typing && (e.key === 'p' || e.key === 'P')) { e.preventDefault(); setDrawer(!drawer) }
+      const k = e.key
+      if (k === 'p' || k === 'P') { e.preventDefault(); setDrawer(!drawer) }
+      else if (/^[1-7]$/.test(k)) { e.preventDefault(); setTf(TIMEFRAMES[+k - 1]) }
+      else if (k === 'c' || k === 'C') update({ chartStyle: prefs.chartStyle === 'line' ? 'candles' : 'line' })
+      else if (k === 'l' || k === 'L') update({ scale: prefs.scale === 'log' ? 'normal' : 'log' })
+      else if (k === '[' || k === ']') { e.preventDefault(); step(k === ']' ? 1 : -1) }
+      else if (k === 'h' || k === 'H') setTool('hline')
+      else if (k === 't' || k === 'T') setTool('trend')
+      else if (k === 'b' || k === 'B') setTool('rect')
+      else if (k === 'n' || k === 'N') setTool('text')
+      else if (k === 'Escape') { if (tool) setTool(null); else dr.select(null) }
+      else if ((k === 'Delete' || k === 'Backspace') && dr.selected) { e.preventDefault(); dr.remove(dr.selected) }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
@@ -183,8 +243,9 @@ export default function StockDetail() {
   const eng = a ? engines(a) : null
   const sel = a?.patterns.find(p => p.id === selected) ?? null
   const dEng = daily ? engines(daily) : null
-  const price = quote?.close ?? dEng?.orig.close ?? eng?.orig.close
-  const chg = quote?.change_pct ?? null
+  const price = (world ? wq?.close : quote?.close) ?? dEng?.orig.close ?? eng?.orig.close
+  const chg = (world ? wq?.change_pct : quote?.change_pct) ?? null
+  const title = world ? symbol.split(':')[1] ?? symbol : ticker(symbol)
   const tfTag = intra ? TF_LABEL[tf] : undefined
   // the live price against the stored analysis (daily and weekly charts): which signals the session has already overtaken
   useEffect(() => {
@@ -197,7 +258,7 @@ export default function StockDetail() {
   const rs = daily?.recommendation.relative_strength ?? null
   const cov = (intra ? ia?.coverage : null) ?? candles?.coverage ?? null
 
-  if (err && !daily) return <div className="p-3"><ErrorBox msg={err} /><Link to="/" className="mt-3 inline-block text-amber">← WL &lt;GO&gt;</Link></div>
+  if (err && !daily) return <div className="p-3"><ErrorBox msg={err} /><Link to={world ? '/global' : '/'} className="mt-3 inline-block text-amber">{world ? '← GLB' : '← WL'} &lt;GO&gt;</Link></div>
 
   // active-drawings strip: everything currently drawn, removable with one click
   const allChips: { key: string; label: string; cls: string; off: () => void; id?: string; swatch?: LevelItem['swatch'] }[] = [
@@ -215,7 +276,9 @@ export default function StockDetail() {
       {/* security header */}
       <header className="card mb-2 flex flex-wrap items-center gap-x-4 gap-y-1 px-3 py-1.5">
         <div className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-1">
-          <h1 className="text-[15px] font-semibold tracking-wide text-amber">{ticker(symbol)}</h1>
+          {world && <Link to="/global" className="text-[11px] text-muted hover:text-amber">GLB ›</Link>}
+          <h1 className="text-[15px] font-semibold tracking-wide text-amber">{title}</h1>
+          {world && <span className="chip bg-panel-3 text-muted">{symbol.split(':')[0]}{wq?.currency ? ` · ${wq.currency}` : ''}</span>}
           <span className="truncate text-[12px] text-muted">{daily?.name}</span>
           {daily?.sector && <span className="chip bg-panel-3 text-muted" title={`${daily.sector.name} sector index, ${daily.sector.date ?? ''}`}>
             {daily.sector.code}{daily.sector.change_pct != null && <b className={`ml-1 ${daily.sector.change_pct >= 0 ? 'text-bull' : 'text-bear'}`}>{daily.sector.change_pct >= 0 ? '+' : ''}{daily.sector.change_pct.toFixed(2)}%</b>}
@@ -228,21 +291,31 @@ export default function StockDetail() {
           <b className="text-[20px] text-fg">{fmt(price)}</b>
           {chg != null && <span className={`text-[13px] ${chg >= 0 ? 'text-bull' : 'text-bear'}`}>{chg >= 0 ? '▲ +' : '▼ '}{chg.toFixed(2)}%</span>}
           {quote && <span className="text-[11px] text-muted">VOL <span className="text-fg">{quote.volume?.toLocaleString()}</span> · LAST {quote.last_trade}</span>}
-          <span className={`chip ${open ? 'bg-bull text-black' : 'bg-panel-3 text-muted'}`}>{open ? 'LIVE' : 'CLOSED'}</span>
-          <button className="chip border border-amber/60 text-amber hover:bg-amber hover:text-black" onClick={() => setAlertDlg(true)} title="Set a price, volume, pattern or news alert on this stock">
+          {world && isAdmin && <button className="chip border border-line text-muted hover:border-bear hover:text-bear" title="Remove this stock and its stored prices and news from the GLB list"
+                                       onClick={async () => { if (confirm(`Remove ${title} from the world list? Its stored prices and headlines are deleted.`)) { await api.worldDelete(symbol); go('/global') } }}>Remove</button>}
+          {world && wq && <span className="text-[11px] text-muted">VOL <span className="text-fg">{wq.volume?.toLocaleString() ?? '–'}</span>{wq.delay_min ? ` · delayed ${wq.delay_min} min` : ''}</span>}
+          {!world && <span className={`chip ${open ? 'bg-bull text-black' : 'bg-panel-3 text-muted'}`}>{open ? 'LIVE' : 'CLOSED'}</span>}
+          {!world && <><button className="chip border border-amber/60 text-amber hover:bg-amber hover:text-black" onClick={() => setAlertDlg(true)} title="Set a price, volume, pattern or news alert on this stock">
             + Alert{counts.alerts > 0 && <b className="ml-0.5">{counts.alerts}</b>}
           </button>
           <button className="chip border border-line text-fg hover:bg-panel-3" onClick={() => setQuery({ tab: 'note' })} title="Your notes on this stock">
             Notes{counts.notes > 0 && <b className="ml-0.5 text-amber">{counts.notes}</b>}
-          </button>
+          </button></>}
         </div>
         {eng && <div className="ml-auto flex items-center gap-2 text-[11px]"><AgreeBadge a={eng.agreement} /><span className="hidden text-muted md:inline">{intra ? `${TF_LABEL[tf]} bar ${a?.time ?? ''}` : `${a?.date} close`}</span></div>}
       </header>
 
-      <div className="card mb-2"><StockStats symbol={symbol} price={price} /></div>
+      {world ? (wq && <div className="card mb-2"><WorldStats q={wq} /></div>) : <div className="card mb-2"><StockStats symbol={symbol} price={price} /></div>}
 
       {/* intraday: data coverage and what this verdict is */}
-      {intra && (
+      {intra && world && (
+        <div className="card mb-2 flex flex-wrap items-center gap-x-3 gap-y-1 px-2.5 py-1.5 text-[11px] text-muted">
+          <span className="chip bg-yellow text-black">{TF_LABEL[tf]}</span>
+          <span>{candles?.bars.length ?? 0} bars from TradingView (delayed, exchange time) · the engines run on demand on the last 500 completed bars
+            {ia?.daily?.verdicts && <> (daily: CLS <b className="text-fg">{ia.daily.verdicts.original ?? '–'}</b> · LVL <b className="text-fg">{ia.daily.verdicts.analyst ?? '–'}</b> · SMC <b className="text-fg">{ia.daily.verdicts.smc ?? '–'}</b>)</>}</span>
+        </div>
+      )}
+      {intra && !world && (
         <div className="card mb-2 flex flex-wrap items-center gap-x-3 gap-y-1 px-2.5 py-1.5 text-[11px] text-muted">
           <span className="chip bg-yellow text-black">{TF_LABEL[tf]}</span>
           {cov ? <CoverageLine c={cov} /> : <span>loading bars…</span>}
@@ -257,7 +330,7 @@ export default function StockDetail() {
       {intra && !a && (
         <div className="card mb-2 px-2.5 py-2 text-[12px]">
           {iLoading || !ia ? <Spinner label={`Running the engines on ${TF_LABEL[tf]} bars…`} />
-            : <p className="text-warn">{ia.error ?? 'No intraday analysis'}. The chart still shows whatever {TF_LABEL[tf]} bars exist; press Backfill history to load more.</p>}
+            : <p className="text-warn">{ia.error ?? 'No intraday analysis'}.{world ? '' : ` The chart still shows whatever ${TF_LABEL[tf]} bars exist; press Backfill history to load more.`}</p>}
         </div>
       )}
 
@@ -270,6 +343,11 @@ export default function StockDetail() {
         </div>
       )}
 
+      {world && eng && (
+        <p className="card mb-2 border-warn/60 px-2.5 py-1.5 text-[12px] text-warn">
+          These are the CSE engines run on a {symbol.split(':')[0]} stock. They were built and tested on CSE stocks only, so here they are <b>untested</b>. Their targets are net of CSE fees, and there is no position size{wq?.currency ? `; prices are in ${wq.currency}` : ''}.
+        </p>
+      )}
       {/* engines side by side */}
       {eng && (
         <div className="mb-2 grid gap-2 lg:grid-cols-3 [&>*]:min-w-0">
@@ -284,9 +362,9 @@ export default function StockDetail() {
         <button className="btn btn-menu" onClick={() => setDrawer(!drawer)} aria-expanded={drawer} title="Patterns & layers (P)">
           <span className="key">1)</span>Patterns & layers <span className="bg-black/30 px-1 num">{drawnCount}/{(a?.patterns.length ?? 0)}</span>
         </button>
-        <button className="btn btn-menu" disabled={busy} onClick={async () => { setBusy(true); try { await api.reanalyze(symbol); await Promise.all([loadAnalysis(), loadIntraday()]) } finally { setBusy(false) } }}>
+        {!world && <button className="btn btn-menu" disabled={busy} onClick={async () => { setBusy(true); try { await api.reanalyze(symbol); await Promise.all([loadAnalysis(), loadIntraday()]) } finally { setBusy(false) } }}>
           <span className="key">2)</span>{busy ? 'Analysing…' : 'Re-analyse'}
-        </button>
+        </button>}
         <div className="flex" role="radiogroup" aria-label="Timeframe">
           <span className="btn btn-menu !pr-1.5"><span className="key">3)</span></span>
           {TIMEFRAMES.map(t => <button key={t} role="radio" aria-checked={tf === t} className="btn !border-l-0 !px-2" onClick={() => setTf(t)}>{TF_LABEL[t]}</button>)}
@@ -307,18 +385,39 @@ export default function StockDetail() {
                     onDoubleClick={() => update({ engines: { original: e === 'original', analyst: e === 'analyst', smc: e === 'smc' }, preset: null })}>{label}</button>
           ))}
         </div>
-        {(candles?.events?.length ?? 0) > 0 && (
+        <div className="flex" role="radiogroup" aria-label="Price scale" title="Price scale: normal, logarithmic (L) or % change from the first bar in view">
+          <span className="btn btn-menu !pr-1.5"><span className="key">6)</span>Scale</span>
+          {([['normal', 'Normal'], ['log', 'Log'], ['pct', '%']] as [ScaleMode, string][]).map(([m, l]) => (
+            <button key={m} role="radio" aria-checked={(prefs.scale ?? 'normal') === m} className="btn !border-l-0 !px-2" onClick={() => update({ scale: m })}>{l}</button>
+          ))}
+        </div>
+        <CompareMenu value={cmpIds} onChange={v => update({ compare: v })} enabled={tf === '1D'} />
+        <DrawBar tool={tool} setTool={setTool} color={drawColor} setColor={setDrawColor} selected={dr.selected} count={dr.drawings.length}
+                 onDelete={() => dr.selected && dr.remove(dr.selected)} onUndo={dr.undo} canUndo={dr.canUndo} onClear={dr.clear}
+                 onRecolor={c => dr.selected && dr.recolor(dr.selected, c)} />
+        <LayoutsMenu current={(): Layout => ({ layers: prefs.layers, engines: prefs.engines, chartStyle: prefs.chartStyle, planEngine: prefs.planEngine,
+                                               scale: prefs.scale ?? 'normal', tf, compare: cmpIds })}
+                     apply={l => { update({ layers: l.layers, engines: l.engines, chartStyle: l.chartStyle, planEngine: l.planEngine, scale: l.scale, compare: l.compare, preset: null }); setTf(l.tf) }} />
+        <button className="btn btn-menu" title="Save the chart as a PNG image" onClick={() => {
+          const day = candles?.bars.at(-1)?.time.slice(0, 10) ?? ''
+          exportPng(chartHandle.current, `${title} · ${TF_LABEL[tf]} · ${day}${daily?.name ? ' · ' + daily.name : ''}`, `${title}_${TF_LABEL[tf]}_${day}.png`)
+        }}><span className="key">0)</span>PNG</button>
+        {!world && (candles?.events?.length ?? 0) > 0 && (
           <button className="btn btn-menu" aria-pressed={raw} onClick={() => setRaw(r => !r)} title="Prices exactly as traded, without the rights/split adjustment (drawings hidden)">
-            <span className="key">6)</span>Raw prices {raw ? 'ON' : 'OFF'}
+            Raw prices {raw ? 'ON' : 'OFF'}
           </button>
         )}
-        <span className="ml-auto hidden text-[11px] text-muted lg:inline">P = patterns · type <b className="text-yellow">CMP &lt;GO&gt;</b>, <b className="text-yellow">SMC &lt;GO&gt;</b>, <b className="text-yellow">DES &lt;GO&gt;</b></span>
+        <span className="ml-auto hidden text-[11px] text-muted xl:inline">keys: P patterns · 1-7 timeframe · C line · L log · [ ] prev/next · H T B N draw · F1 all keys</span>
       </div>
 
       {/* chart */}
       <section className="card">
         <div ref={chipStrip} className="scroll-thin flex cursor-grab items-center gap-1 overflow-x-auto border-b border-line px-2 py-1" title="Scroll with the mouse wheel or drag sideways">
           <span className="label shrink-0 pr-1">GP · On chart</span>
+          {cmpIds.length > 0 && (tf === '1D'
+            ? <CompareLegend main={title} items={cmpIds.map(id => ({ id, label: cmpData[id]?.label ?? id, error: !!cmpData[id] && !cmpData[id].points.length }))}
+                             onRemove={id => update({ compare: cmpIds.filter(x => x !== id) })} />
+            : <span className="shrink-0 border-r border-line pr-2 text-[11px] text-warn">comparison: daily chart only</span>)}
           {chips.length === 0 && <span className="text-[11px] text-muted">nothing drawn; open 1) Patterns & layers</span>}
           {chips.map(c => (
             <span key={c.key} className={`chip shrink-0 border border-line bg-panel-2 !normal-case !font-medium ${c.cls}`}>
@@ -332,7 +431,10 @@ export default function StockDetail() {
         <div className="h-[64vh] min-h-[420px]">
           {candles ? <PriceChart candles={candles} analysis={a} visible={drawn} layers={prefs.layers} highlightId={selected}
                                  onSelect={selectPattern} quote={tf === '1D' || intra ? quote : null} focus={focus}
-                                 planEngine={prefs.planEngine} levelOverrides={prefs.levelOverrides} chartStyle={prefs.chartStyle} engineMask={mask} /> : <Spinner label="Loading chart…" />}
+                                 planEngine={prefs.planEngine} levelOverrides={prefs.levelOverrides} chartStyle={prefs.chartStyle} engineMask={mask}
+                                 scaleMode={prefs.scale ?? 'normal'} compare={compareLines} drawings={raw ? [] : dr.drawings} tool={raw ? null : tool} drawColor={drawColor}
+                                 selectedDrawing={dr.selected} onDrawings={(next, sel) => { dr.commit(next, sel); setTool(null) }} onSelectDrawing={dr.select}
+                                 handleRef={chartHandle} /> : <Spinner label="Loading chart…" />}
         </div>
         {chips.some(c => c.swatch) && <SmcKey />}
       </section>
@@ -360,14 +462,14 @@ export default function StockDetail() {
       )}
 
       <nav className="mt-3 flex gap-px overflow-x-auto border-b border-line" role="tablist">
-        {TABS.map(t => (
+        {tabList.map(t => (
           <button key={t.id} role="tab" aria-selected={tab === t.id} className="tab" onClick={() => setQuery({ tab: t.id })}>
             <span className="text-amber">{t.code}</span> <span className="hidden sm:inline">{t.label}</span>
           </button>
         ))}
       </nav>
       <div className="py-3">
-        {!daily ? <Spinner /> : tab === 'rec' ? (a ? <RecommendationTab a={a} view={view} onView={v => setQuery({ tab: 'rec', view: v })}
+        {tab === 'news' && world ? <WorldNews symbol={symbol} /> : !daily ? <Spinner /> : tab === 'rec' ? (a ? <RecommendationTab a={a} view={view} onView={v => setQuery({ tab: 'rec', view: v })}
                                                              onPattern={id => { selectPattern(id); window.scrollTo({ top: 0, behavior: 'smooth' }) }} />
                                                   : <p className="text-[12px] text-muted">No {TF_LABEL[tf]} analysis yet (see above). Switch to 1D for the nightly analysis.</p>)
           : tab === 'des' ? <FundamentalsTab symbol={symbol} onSaved={loadAnalysis} />

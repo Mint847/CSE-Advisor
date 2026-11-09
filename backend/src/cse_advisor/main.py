@@ -23,7 +23,7 @@ from sqlalchemy import func, select
 
 from .strategy.recommend import plan_summary, split_engines
 from . import engine as eng
-from . import accounts, alerts_api, auth, market_api, ingest, jobs, journal, portfolio, screener, telegram_bot
+from . import accounts, alerts_api, auth, globalstocks_api, market_api, ingest, jobs, journal, portfolio, screener, telegram_bot
 from .auth import User, current_user, require_admin
 from .config import FRONTEND_DIST, env, pattern_catalog, settings
 from .cse_client import CDN
@@ -51,8 +51,15 @@ async def lifespan(_: FastAPI):
     # limit, so after a sleep it fires at once instead of being dropped as late.
     sched.add_job(jobs.ensure_fresh, IntervalTrigger(minutes=jobs.CHECK_MINUTES, timezone=tz), id="eod_watchdog", coalesce=True,
                   max_instances=1, misfire_grace_time=None)
+    # world stocks (GLB): after the US close (about 02:30 Colombo), and caught up hourly if the PC slept through it
+    from . import globalstocks
+    gh, gm = map(int, str(globalstocks.cfg().get("job_time", "07:00")).split(":"))
+    sched.add_job(globalstocks.run_all, CronTrigger(hour=gh, minute=gm, timezone=tz), id="world", misfire_grace_time=6 * 3600, coalesce=True)
+    sched.add_job(globalstocks.catch_up, IntervalTrigger(minutes=60, timezone=tz), id="world_watchdog", coalesce=True, max_instances=1,
+                  misfire_grace_time=None)
     sched.start()
     threading.Thread(target=jobs.startup_catch_up, daemon=True, name="catch-up").start()
+    globalstocks.catch_up_later()
     tg_stop = telegram_bot.start_polling()
     task = asyncio.create_task(live.run())
     log.info("CSE Advisor ready; EOD job daily at %s %s", settings()["market"]["eod_job_time"], tz)
@@ -65,6 +72,7 @@ async def lifespan(_: FastAPI):
 app = FastAPI(title="CSE Advisor", lifespan=lifespan)
 app.include_router(alerts_api.router)         # alerts, inbox, notes
 app.include_router(market_api.router)         # heatmap, news feed, calendar, key stats, quote card
+app.include_router(globalstocks_api.router)   # world stocks (GLB)
 
 PUBLIC_API = {"/api/auth/config"}
 

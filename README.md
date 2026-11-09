@@ -4,6 +4,8 @@ A personal **analysis tool** for the Colombo Stock Exchange (CSE). You choose 10
 
 It runs on your own computer (or your own server) with free data, and it never places an order. Sign-in is optional: off, it is a single-user app on this PC; on, anyone can create an account (email or Google) and each account has its own watchlist and positions.
 
+> **Status: early preview, looking for feedback.** This is a personal project that I run on my own PC. It is not a hosted service, there is nothing to sign up for, and it is not yet a finished product. If you try it or just look at the screenshots, I would like to hear what is useful, what is confusing and what is missing: please open an issue.
+
 > ## ⚠️ Not financial advice
 > **CSE Advisor is a software tool that organises public market data and applies fixed technical-analysis rules to it. It is not financial, investment, legal or tax advice, and it is not a recommendation to buy, sell or hold any security.** The author is not a licensed financial adviser, and giving personalised investment advice may require a licence in your country. Words such as *BUY*, *WATCH*, *AVOID*, *entry*, *stop* and *target* are labels the rules produce from price history, not instructions.
 >
@@ -59,6 +61,22 @@ Illustrations of the tool's output on 4 Nov 2026 with seven example stocks, not 
 **Comparing the engines:** each engine's setup, prices and reasons for and against, in plain language. When they disagree, the page says so.
 
 ![Compare](docs/screenshots/14-recommendation-compare.png)
+
+**Market heatmap:** every listed stock by sector, sized by market cap, coloured by the day's change. Sectors come from TradingView's public scanner.
+
+![Heatmap](docs/screenshots/03-heatmap.png)
+
+**World stocks (GLB):** NVIDIA, SK Hynix, Micron, big tech and leaders from other sectors, with delayed quotes and the three engines run on them (untested outside the CSE).
+
+![World stocks](docs/screenshots/04-world-stocks.png)
+
+**The news around each big move:** every session a world stock moved 4% or more, with the headlines published from the day before to the day after. It shows what was published, not proof of what caused the move.
+
+![World stock news](docs/screenshots/06-world-stock-news.png)
+
+**Chart tools:** compare against the ASPI or another stock as % change, and draw your own lines, boxes and notes (saved per stock).
+
+![Chart tools](docs/screenshots/07-chart-compare-drawings.png)
 
 ## What the tests found
 
@@ -140,6 +158,13 @@ You get an evening digest, alerts for signal changes and announcements, and comm
 - **Market banner** on the watchlist: ASPI against its 100- and 200-day averages and market breadth. A description, not a signal; no engine uses it.
 - **ALRT (F9), alerts and the inbox:** your own alerts on any stock you follow: price rises or falls to a level, up or down X% on the day, within X% of the 52-week high, volume at X times the 20-day average (all checked on each live quote while the market is open, so the app has to be running), and, checked each evening after the analysis, a new high-priority pattern, a new announcement (by importance), an engine changing its verdict, or the RSI crossing a level. Each alert fires at most once a day (price alerts can be set to fire once and switch off). Everything lands in the **inbox** (the bell in the header shows the unread count): your alerts plus the engines' own (stop or target hit, entry trigger, buy zone, the evening's signal changes). The Telegram owner also gets them on Telegram; browser pop-ups are optional. **+ Alert** in a stock's header has one-click +/-3% and +/-5% price alerts. Inbox entries are kept 90 days.
 - **NOTE (F10), notes:** free-text notes with tags on a stock (the **NOTE** tab on its page, and a count in its header), on a position (**Notes** button in PORT), or on nothing in particular. Closing a position asks what went right or wrong and saves it as a note tagged `review`. The NOTE page searches all of them.
+- **Chart tools** (the toolbar above every chart, CSE and world stocks):
+  - **6) Scale:** normal, logarithmic or % change from the first bar in view.
+  - **7) Compare:** up to three lines (the ASPI, S&P 500, Nasdaq-100, any of your stocks or a world stock) as % change beside the stock on the daily chart; the stock itself becomes a white line, and each comparison has its own colour, dash and label (colours checked for colour-blind readers).
+  - **8) Draw:** horizontal lines, trendlines, boxes and text notes. A point snaps to the bar's open, high, low or close when close to it; drag a drawing (or an end point) to move it, Delete removes it, Ctrl+Z undoes. Drawings are saved per stock for your account and show on every timeframe.
+  - **9) Layouts:** save the current set-up (layers, engines, style, scale, timeframe, comparison) under a name and apply it to any stock. **0) PNG** saves the chart as an image.
+  - **Keys:** 1-7 timeframe, C candles/line, L log scale, [ and ] previous/next stock in your list, H/T/B/N drawing tools, Esc stops drawing (F1 lists them all).
+- **GLB, world stocks:** NVIDIA, AMD, Broadcom, TSMC, ASML, Micron, SK Hynix, Samsung, Intel and Arm (AI & chips), the big tech names, and leaders from other sectors (JPMorgan, Exxon, Eli Lilly, Walmart, Berkshire); add any other with a ticker (`PLTR`, or `KRX:005930` for other markets) or remove one. Delayed quotes (TradingView's free feed, 15-20 min) with week, month and year performance; each stock opens the same chart, patterns and engine panels as a CSE stock, plus a **NEWS** tab listing every session it moved 4% or more (`global_stocks.move_pct`) with the headlines from the day before to the day after (Google News, found by company name and its CEO; market news and stories matching the move's direction first). Big moves are also marked on the chart. Updated each night after the US close (07:00 Colombo, caught up hourly). The engines were built and tested on CSE stocks only: on these they are **untested**, their targets are net of CSE fees, and the position size is left out. The headlines show what was published around a move, not proof of what caused it.
 - **HMAP, heatmap:** every listed stock as a tile grouped by sector, sized by market cap (or today's turnover) and coloured by its change on the day; amber outline = on your lists; click a tile to open the stock (or its quote card). Sectors and industries come from TradingView's public scanner (refreshed weekly, display only: no engine uses them; the S&P/CSE sector index you can set in SET is still what the relative-strength line uses).
 - **NEWS, feed:** the CSE's announcements and the news headlines in one list, newest first, for your stocks or all tracked ones, filtered by type, tone, period and search. **CAL, calendar:** a month grid and list of results due (estimated), ex-dividend dates, payments, AGMs and corporate actions for your stocks, plus dates you add yourself.
 - **Quote card:** type any listed ticker (`ABAN <GO>`) or click it in All stocks or the heatmap and you get today's price, ranges, market cap, foreign holding and sector, with an Add button; nothing is fetched or stored until you add it. Every stock page also has a key-statistics strip under its header.
@@ -175,7 +200,7 @@ cd backend && .venv\Scripts\python -m pytest -q
 cd frontend && npm test                       # sign-in rules (Node 22.18+)
 ```
 
-Covers the pattern detectors (planted and mirrored patterns), trade-plan rules, the three engines and their independence, intraday bar building, statement parsing, catalysts, corporate-action maths, portfolio totals, replay tests against known example setups, sign-in (token checks, each account seeing only its own data, the migration of a pre-accounts database), the evening-run watchdog, data health, backups and restore, the alert rules and notes, and the market-overview routes and heatmap geometry.
+Covers the pattern detectors (planted and mirrored patterns), trade-plan rules, the three engines and their independence, intraday bar building, statement parsing, catalysts, corporate-action maths, portfolio totals, replay tests against known example setups, sign-in (token checks, each account seeing only its own data, the migration of a pre-accounts database), the evening-run watchdog, data health, backups and restore, the alert rules and notes, and the market-overview routes and heatmap geometry, and the world stocks (time zones, big moves, the headlines around them, the routes).
 
 ## Disclaimer
 

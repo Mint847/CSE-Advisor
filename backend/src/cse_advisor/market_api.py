@@ -218,3 +218,68 @@ def quote_card(symbol: str, u: User = Depends(current_user)) -> dict[str, Any]:
 def listed_symbols(_: User = Depends(current_user)) -> list[dict[str, str]]:
     """Symbol and name of every listed stock (for the command line to open any of them)."""
     return [{"symbol": r["symbol"], "name": r["name"]} for r in _listed()]
+
+
+# ------------------------------------------------------------------ compare (the chart's % comparison lines)
+INDEX_SERIES = {"^ASPI": "ASPI", "^SPX": "S&P 500", "^NDX": "Nasdaq-100", "^NIFTY": "Nifty 50", "^GOLD": "Gold", "^BRENT": "Brent crude"}
+_TV_CACHE: dict[str, tuple[float, list[dict[str, Any]]]] = {}
+MAX_COMPARE = 4
+
+
+def _compare_points(s, sym: str) -> tuple[str, list[dict[str, Any]]] | None:
+    """(label, daily closes) for a compare id: an index (^ASPI, ^SPX...), a CSE stock (adjusted closes), a world stock
+    (EXCHANGE:TICKER) or any other CSE-listed stock (TradingView, cached an hour)."""
+    from . import engine as eng
+    from .db import GlobalPrice, GlobalStock, MacroDaily, MarketDaily
+    if sym == "^ASPI":
+        rows = s.execute(select(MarketDaily.date, MarketDaily.aspi).where(MarketDaily.aspi.is_not(None)).order_by(MarketDaily.date)).all()
+        return "ASPI", [{"time": str(d), "value": v} for d, v in rows]
+    if sym in INDEX_SERIES:
+        rows = s.execute(select(MacroDaily.date, MacroDaily.close).where(MacroDaily.code == sym[1:].lower()).order_by(MacroDaily.date)).all()
+        return INDEX_SERIES[sym], [{"time": str(d), "value": v} for d, v in rows]
+    if ":" in sym:
+        g = s.get(GlobalStock, sym)
+        rows = s.execute(select(GlobalPrice.date, GlobalPrice.close).where(GlobalPrice.symbol == sym).order_by(GlobalPrice.date)).all()
+        return (g.name if g else sym), [{"time": str(d), "value": v} for d, v in rows]
+    sec = s.get(Security, sym)
+    if sec is not None:
+        adj, _ = eng.load_adjusted(s, sym)
+        if not adj.empty:
+            return sym.split(".")[0], [{"time": str(ts.date()), "value": round(float(c), 4)} for ts, c in adj["close"].items()]
+    hit = _TV_CACHE.get(sym)
+    if hit is None or time.monotonic() - hit[0] > 3600:
+        from . import tv_client
+        bars = tv_client.fetch_bars(sym, "1D", 1500)
+        hit = (time.monotonic(), [{"time": str(b["ts"].date()), "value": float(b["close"])} for b in bars])
+        _TV_CACHE[sym] = hit
+    return (sym.split(".")[0], hit[1]) if hit[1] else None
+
+
+@router.get("/api/compare")
+def compare(symbols: str = Query(..., max_length=300), _: User = Depends(current_user)) -> dict[str, Any]:
+    """Daily closes for up to four series, to draw as % change lines beside a stock's chart."""
+    want = [x.strip() for x in symbols.split(",") if x.strip()][:MAX_COMPARE]
+    out: dict[str, Any] = {}
+    with SessionLocal() as s:
+        for sym in want:
+            try:
+                got = _compare_points(s, sym)
+            except Exception as exc:  # noqa: BLE001
+                log.warning("compare %s: %s", sym, exc)
+                got = None
+            out[sym] = {"label": got[0], "points": got[1]} if got and got[1] else {"label": sym, "points": [], "error": "no data"}
+    return {"series": out}
+
+
+@router.get("/api/compare/options")
+def compare_options(u: User = Depends(current_user)) -> dict[str, Any]:
+    """What can be compared: the indices, this account's CSE stocks and the world stocks."""
+    from .db import GlobalStock, MacroDaily
+    with SessionLocal() as s:
+        mine = sorted(accounts.user_symbols(s, u.uid))
+        names = {x.symbol: x.name for x in s.scalars(select(Security).where(Security.symbol.in_(mine or {""})))}
+        have = set(s.scalars(select(MacroDaily.code).distinct()))
+        world = s.scalars(select(GlobalStock).order_by(GlobalStock.group, GlobalStock.symbol)).all()
+        return {"indices": [{"id": k, "label": v} for k, v in INDEX_SERIES.items() if k == "^ASPI" or k[1:].lower() in have],
+                "cse": [{"id": x, "label": x.split(".")[0], "name": names.get(x, x)} for x in mine],
+                "world": [{"id": g.symbol, "label": g.symbol.split(":")[1], "name": g.name} for g in world]}

@@ -1,12 +1,38 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
-  CandlestickSeries, ColorType, CrosshairMode, HistogramSeries, LineSeries, LineStyle, createChart, createSeriesMarkers,
+  CandlestickSeries, ColorType, CrosshairMode, HistogramSeries, LineSeries, LineStyle, PriceScaleMode, createChart, createSeriesMarkers,
   type IChartApi, type IPriceLine, type ISeriesApi, type ISeriesMarkersPluginApi, type Logical, type SeriesMarker, type Time,
   type UTCTimestamp,
 } from 'lightweight-charts'
 import type { Analysis, Candles, ChartStyle, Engine, EngineMask, Pattern, Quote } from '../api'
 import { ALL_ENGINES, engines, fmt } from '../api'
 import { CHART_FONT, PatternOverlay, SESSION_CLOSE, SESSION_OPEN, TimeMapper, readPalette, type DrawnPlan, type Palette } from './overlay'
+import { DrawingsOverlay, MAX_DRAWINGS, TWO_POINT, newId, shifted, snapPrice, tidy, type DrawKind, type DrawPoint, type Drawing, type Hit } from './drawings'
+
+export type ScaleMode = 'normal' | 'log' | 'pct'
+/** A comparison line: another series' closes, drawn as % change from the first visible bar beside this one. */
+export interface CompareLine { id: string; label: string; color: string; dash: 0 | 1 | 2; points: { time: string; value: number }[] }
+/** Compare colours, checked with the dataviz palette validator on the black chart, all pairs and beside the stock's own
+ *  near-white line: lightness band, colour-blind separation (worst dE 12.5), normal vision (21.2), contrast. Three at
+ *  most; each also has its own dash style and a label on the price scale, so colour is never the only cue. */
+export const COMPARE_COLORS = ['#2f8fd6', '#b8890a', '#d1497a']
+export const COMPARE_MAIN = '#e6e6e6'
+export const MAX_COMPARE = 3
+/** What the page can ask of the chart (PNG export). */
+export interface ChartHandle { screenshot: () => HTMLCanvasElement | null }
+
+/** Another series' closes on this chart's bars: each bar takes the last close on or before its date (no extra bars on
+ *  days only the other market traded). Bars before the other series starts are left out. */
+export function alignTo(times: string[], pts: { time: string; value: number }[]): { time: string; value: number }[] {
+  const out: { time: string; value: number }[] = []
+  let j = -1
+  for (const t of times) {
+    const day = t.slice(0, 10)
+    while (j + 1 < pts.length && pts[j + 1].time <= day) j++
+    if (j >= 0) out.push({ time: t, value: pts[j].value })
+  }
+  return out
+}
 
 /** Chart time for a bar label. Daily 'YYYY-MM-DD' stays a business-day string; intraday 'YYYY-MM-DD HH:MM'
  *  (Colombo wall time) becomes a UTC timestamp of that same wall time, so the axis reads Colombo time. */
@@ -125,7 +151,19 @@ interface Props {
   chartStyle?: ChartStyle
   /** which engines' drawings, zones and plans are shown */
   engineMask?: EngineMask
+  scaleMode?: ScaleMode
+  compare?: CompareLine[]
+  /** your own drawings; `tool` = the drawing tool in use (null: select / move) */
+  drawings?: Drawing[]
+  tool?: DrawKind | null
+  drawColor?: string
+  selectedDrawing?: string | null
+  onDrawings?: (next: Drawing[], select?: string | null) => void
+  onSelectDrawing?: (id: string | null) => void
+  handleRef?: { current: ChartHandle | null }
 }
+const NO_DRAWINGS: Drawing[] = []
+const NO_COMPARE: CompareLine[] = []
 
 const NO_OVERRIDES: Record<string, boolean> = {}
 
@@ -134,7 +172,8 @@ const alpha = (hex: string, a: number) => {
   return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`
 }
 
-export default function PriceChart({ candles, analysis, visible, layers, highlightId, onSelect, quote, focus, planEngine = 'both', levelOverrides = NO_OVERRIDES, chartStyle = 'candles', engineMask = ALL_ENGINES }: Props) {
+export default function PriceChart({ candles, analysis, visible, layers, highlightId, onSelect, quote, focus, planEngine = 'both', levelOverrides = NO_OVERRIDES, chartStyle = 'candles', engineMask = ALL_ENGINES,
+  scaleMode = 'normal', compare = NO_COMPARE, drawings = NO_DRAWINGS, tool = null, drawColor = '#ffa028', selectedDrawing = null, onDrawings, onSelectDrawing, handleRef }: Props) {
   const box = useRef<HTMLDivElement>(null)
   const chartRef = useRef<IChartApi | null>(null)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -149,11 +188,20 @@ export default function PriceChart({ candles, analysis, visible, layers, highlig
   const [legend, setLegend] = useState<{ time: string; o: number; h: number; l: number; c: number; est: boolean } | null>(null)
   const onSelectRef = useRef(onSelect)
   onSelectRef.current = onSelect
+  const draw = useRef<DrawingsOverlay | null>(null)
+  const compareSeries = useRef<Map<string, ISeriesApi<'Line'>>>(new Map())
+  const [textAt, setTextAt] = useState<{ x: number; y: number; p: DrawPoint } | null>(null)
+  const [text, setText] = useState('')
+  // the latest props for the chart's own event handlers (subscribed once)
+  const live = useRef({ tool, drawColor, drawings, selectedDrawing, onDrawings, onSelectDrawing, times: [] as string[], bars: candles.bars })
 
   const times = useMemo(() => candles.bars.map(b => b.time), [candles])
   const mapper = useMemo(() => new TimeMapper(times), [times])
   const barByTime = useMemo(() => new Map(candles.bars.map(b => [b.time, b])), [candles])
   const patternById = useMemo(() => new Map((analysis?.patterns ?? []).map(p => [p.id, p])), [analysis])
+  live.current = { tool, drawColor, drawings, selectedDrawing, onDrawings, onSelectDrawing, times, bars: candles.bars }
+  const comparing = compare.length > 0
+  const style: ChartStyle = comparing ? 'line' : chartStyle         // comparing: the stock is one near-white line among lines
 
   // ---- create chart once
   useEffect(() => {
@@ -190,11 +238,32 @@ export default function PriceChart({ candles, analysis, visible, layers, highlig
     const ov = new PatternOverlay({ pane: 'main', patterns: [], highlightId: null, hoverId: null, zones: null, pools: null, profile: null, plans: [], buyZones: null }, pal, new TimeMapper([]))
     candle.attachPrimitive(ov)
     overlay.current = ov
+    const dv = new DrawingsOverlay(new TimeMapper([]))
+    candle.attachPrimitive(dv)
+    draw.current = dv
     markers.current = createSeriesMarkers(candle, [])
+
+    // a point on the chart: the bar under the pointer (clamped to the data) and its price, snapped to that bar's OHLC
+    const pointAt = (x: number, y: number): DrawPoint | null => {
+      const L = live.current
+      const lg = chart.timeScale().coordinateToLogical(x)
+      const price = candle.coordinateToPrice(y)
+      if (lg == null || price == null || !L.times.length) return null
+      const i = Math.max(0, Math.min(L.times.length - 1, Math.round(lg)))
+      const bar = L.bars[i]
+      return { time: L.times[i], price: tidy(snapPrice(price, bar, v => candle.priceToCoordinate(v), y)) }
+    }
 
     chart.subscribeCrosshairMove(param => {
       const id = typeof param.hoveredObjectId === 'string' ? param.hoveredObjectId : null
-      setHover(id && param.point ? { id, x: param.point.x, y: param.point.y } : null)
+      // a two-point drawing being placed follows the pointer
+      const d = draw.current?.state.draft
+      if (d && param.point) {
+        const p = pointAt(param.point.x, param.point.y)
+        if (p) draw.current?.set({ draft: { ...d, p2: p } })
+      }
+      draw.current?.set({ hover: id?.startsWith('draw:') ? id.slice(5) : null })
+      setHover(id && !id.startsWith('draw:') && param.point ? { id, x: param.point.x, y: param.point.y } : null)
       overlay.current?.set({ hoverId: id })
       rsiOverlay.current?.set({ hoverId: id })
       const t = param.time != null ? barLabel(param.time) : undefined
@@ -204,13 +273,98 @@ export default function PriceChart({ candles, analysis, visible, layers, highlig
       } else setLegend(null)
     })
     chart.subscribeClick(param => {
+      const L = live.current
       const id = typeof param.hoveredObjectId === 'string' ? param.hoveredObjectId : null
+      if (L.tool) return                                            // drawing: handled on pointer up below
+      if (id?.startsWith('draw:')) { L.onSelectDrawing?.(id.slice(5)); return }
+      L.onSelectDrawing?.(null)
       onSelectRef.current(id)
     })
+
+    // placing a drawing: from the pointer itself, because the chart drops a click that follows another within about
+    // half a second (it takes the pair for a double-click), which would lose the second point of a quick trendline
+    const place = (x: number, y: number) => {
+      const L = live.current
+      if (!L.tool) return
+      const p = pointAt(x, y)
+      if (!p) return
+      const d = draw.current?.state.draft
+      if (d) {                                                      // the second point of a trendline / rectangle
+        draw.current?.set({ draft: null })
+        L.onDrawings?.([...L.drawings, { ...d, p2: p }].slice(-MAX_DRAWINGS), d.id)
+      } else if (L.tool === 'text') {
+        setText(''); setTextAt({ x, y, p })
+      } else if (TWO_POINT[L.tool]) {
+        draw.current?.set({ draft: { id: newId(), kind: L.tool, p1: p, p2: p, color: L.drawColor } })
+      } else {
+        const nd: Drawing = { id: newId(), kind: L.tool, p1: p, color: L.drawColor }
+        L.onDrawings?.([...L.drawings, nd].slice(-MAX_DRAWINGS), nd.id)
+      }
+    }
+    let press: { x: number; y: number } | null = null
+
+    // drag a drawing (or one of its end points) to move it; the chart doesn't pan meanwhile
+    let drag: { hit: Hit; orig: Drawing; from: DrawPoint; idx: number } | null = null
+    const down = (e: PointerEvent) => {
+      const L = live.current
+      if (e.button !== 0) return
+      if (L.tool) { press = { x: e.clientX, y: e.clientY }; return }
+      const r = el.getBoundingClientRect()
+      const x = e.clientX - r.left, y = e.clientY - r.top
+      const h = draw.current?.hit(x, y)
+      const d = h ? L.drawings.find(z => z.id === h.id) : null
+      const p = pointAt(x, y)
+      if (!h || !d || !p) return
+      drag = { hit: h, orig: d, from: p, idx: L.times.indexOf(p.time) }
+      chart.applyOptions({ handleScroll: false, handleScale: false })
+      L.onSelectDrawing?.(d.id)
+    }
+    const moved = (e: PointerEvent): Drawing | null => {
+      if (!drag) return null
+      const L = live.current
+      const r = el.getBoundingClientRect()
+      const p = pointAt(e.clientX - r.left, e.clientY - r.top)
+      if (!p) return null
+      const { hit, orig, from, idx } = drag
+      if (hit.part === 'p1') return { ...orig, p1: p }
+      if (hit.part === 'p2') return { ...orig, p2: p }
+      const di = L.times.indexOf(p.time) - idx
+      return shifted(orig, di, p.price - from.price, t => { const k = L.times.indexOf(t); return k < 0 ? null : k }, i => L.times[i] ?? null)
+    }
+    const move = (e: PointerEvent) => {
+      const nd = moved(e)
+      if (nd) draw.current?.set({ drawings: live.current.drawings.map(z => z.id === nd.id ? nd : z) })
+    }
+    const up = (e: PointerEvent) => {
+      if (press) {                                                  // a tap, not a pan: place the point
+        const moved = Math.hypot(e.clientX - press.x, e.clientY - press.y) > 5
+        press = null
+        const r = el.getBoundingClientRect()
+        if (!moved && e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom) place(e.clientX - r.left, e.clientY - r.top)
+        return
+      }
+      if (!drag) return
+      const nd = moved(e)
+      const L = live.current
+      chart.applyOptions({ handleScroll: true, handleScale: true })
+      if (nd && JSON.stringify(nd) !== JSON.stringify(drag.orig)) L.onDrawings?.(L.drawings.map(z => z.id === nd.id ? nd : z), nd.id)
+      drag = null
+    }
+    el.addEventListener('pointerdown', down, true)
+    window.addEventListener('pointermove', move)
+    window.addEventListener('pointerup', up)
     // the theme is dark-only; re-read the tokens once styles have settled
     const t = window.setTimeout(() => setPalette(readPalette()), 300)
-    return () => { window.clearTimeout(t); chart.remove(); chartRef.current = null }
-  }, [])
+    if (handleRef) handleRef.current = { screenshot: () => chart.takeScreenshot(true, false) }   // with the top layer: your drawings and the pattern labels
+    return () => {
+      window.clearTimeout(t)
+      el.removeEventListener('pointerdown', down, true)
+      window.removeEventListener('pointermove', move)
+      window.removeEventListener('pointerup', up)
+      if (handleRef) handleRef.current = null
+      chart.remove(); chartRef.current = null
+    }
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ---- theme changes
   useEffect(() => {
@@ -232,7 +386,7 @@ export default function PriceChart({ candles, analysis, visible, layers, highlig
     chartRef.current?.applyOptions({ timeScale: { timeVisible: intraday, secondsVisible: false } })
     cs.candle.setData(candles.bars.map(b => ({
       time: ct(b.time), open: b.open, high: b.high, low: b.low, close: b.close,
-      ...(b.est && chartStyle === 'candles' ? { color: alpha(b.close >= b.open ? palette.bull : palette.bear, 0.55) } : {}),
+      ...(b.est && style === 'candles' ? { color: alpha(b.close >= b.open ? palette.bull : palette.bear, 0.55) } : {}),
     })))
     cs.close?.setData(candles.bars.map(b => ({ time: ct(b.time), value: b.close })))
     cs.volume!.setData(candles.bars.map(b => ({ time: ct(b.time), value: b.volume, color: alpha(b.close >= b.open ? palette.bull : palette.bear, 0.35) })))
@@ -240,6 +394,7 @@ export default function PriceChart({ candles, analysis, visible, layers, highlig
       cs[k]?.setData((candles.indicators[k] ?? []).map(p => ({ time: ct(p.time), value: p.value })))
     overlay.current?.set({}, mapper)
     rsiOverlay.current?.set({}, mapper)
+    draw.current?.set({}, mapper)
     // reset the view only for a new stock / timeframe, not when the same series refreshes during the session
     const key = `${candles.symbol}|${candles.timeframe}|${candles.adjusted}`
     if (viewKey.current !== key) {
@@ -247,37 +402,65 @@ export default function PriceChart({ candles, analysis, visible, layers, highlig
       const n = candles.bars.length
       chartRef.current?.timeScale().setVisibleLogicalRange({ from: Math.max(0, n - 150) as Logical, to: (n + 8) as Logical })
     }
-  }, [candles, mapper, palette, chartStyle])
+  }, [candles, mapper, palette, style])
 
   // ---- candles or a close-price line. The candle series stays (it carries the drawings, markers and plan lines):
   // in line mode it is drawn transparent and left out of the price-scale range
   useEffect(() => {
     const cs = s.current
     if (!cs.candle) return
-    const line = chartStyle === 'line'
+    const line = style === 'line'
     const clear = 'rgba(0,0,0,0)'
     cs.candle.applyOptions({
       upColor: line ? clear : palette.bull, downColor: line ? clear : palette.bear, wickUpColor: line ? clear : palette.bull, wickDownColor: line ? clear : palette.bear,
       priceLineVisible: !line, lastValueVisible: !line,
       autoscaleInfoProvider: line ? () => null : (base: () => unknown) => base() as never,
     })
-    cs.close?.applyOptions({ visible: line })
-  }, [chartStyle, palette])
+    cs.close?.applyOptions({ visible: line, color: comparing ? COMPARE_MAIN : palette.blue, title: comparing ? (candles.symbol.includes(':') ? candles.symbol.split(':')[1] : candles.symbol.split('.')[0]) : '' })
+  }, [style, palette, comparing, candles.symbol])
+
+  // ---- your drawings (the draft of a two-point drawing ends when the tool changes)
+  useEffect(() => { draw.current?.set({ drawings, selected: selectedDrawing }) }, [drawings, selectedDrawing])
+  useEffect(() => { draw.current?.set({ draft: null }); setTextAt(null) }, [tool])
+
+  // ---- price scale: normal, logarithmic or % (comparison lines force %: each line from its first visible bar)
+  const pct = scaleMode === 'pct' || compare.length > 0
+  useEffect(() => {
+    chartRef.current?.priceScale('right').applyOptions({
+      mode: pct ? PriceScaleMode.Percentage : scaleMode === 'log' ? PriceScaleMode.Logarithmic : PriceScaleMode.Normal })
+  }, [scaleMode, pct])
+
+  // ---- comparison lines on the same % scale
+  useEffect(() => {
+    const chart = chartRef.current
+    if (!chart) return
+    const have = compareSeries.current
+    for (const [id, se] of have) if (!compare.some(c => c.id === id)) { chart.removeSeries(se); have.delete(id) }
+    for (const c of compare) {
+      let se = have.get(c.id)
+      if (!se) {
+        se = chart.addSeries(LineSeries, { color: c.color, lineWidth: 2, priceLineVisible: false, lastValueVisible: true, title: c.label, crosshairMarkerVisible: true })
+        have.set(c.id, se)
+      }
+      se.applyOptions({ color: c.color, title: c.label, lineStyle: [LineStyle.Solid, LineStyle.Dashed, LineStyle.Dotted][c.dash] })
+      se.setData(alignTo(times, c.points).map(p => ({ time: ct(p.time), value: p.value })))
+    }
+  }, [compare, times])
 
   // ---- zig-zag swings: the line chart's closes, or the candles' highs and lows
   useEffect(() => {
     const z = s.current.zigzag
     if (!z) return
     z.applyOptions({ visible: layers.zigzag })
-    z.setData(layers.zigzag ? zigzagPoints(candles.bars, chartStyle === 'line').map(p => ({ time: ct(p.time), value: p.value })) : [])
-  }, [layers.zigzag, candles, chartStyle])
+    z.setData(layers.zigzag ? zigzagPoints(candles.bars, style === 'line').map(p => ({ time: ct(p.time), value: p.value })) : [])
+  }, [layers.zigzag, candles, style])
 
   // ---- indicator layers & panes
   useEffect(() => {
     const chart = chartRef.current, cs = s.current
     if (!chart) return
-    for (const k of ['ema21', 'ema50', 'ema200']) cs[k]?.applyOptions({ visible: layers.ema })
-    for (const k of ['bb_up', 'bb_mid', 'bb_lo']) cs[k]?.applyOptions({ visible: layers.bb })
+    for (const k of ['ema21', 'ema50', 'ema200']) cs[k]?.applyOptions({ visible: layers.ema && !pct })
+    for (const k of ['bb_up', 'bb_mid', 'bb_lo']) cs[k]?.applyOptions({ visible: layers.bb && !pct })
     cs.volume?.applyOptions({ visible: layers.volume })
 
     const pal = palette
@@ -306,7 +489,7 @@ export default function PriceChart({ candles, analysis, visible, layers, highlig
     cs.macd_hist?.setData((ind.macd_hist ?? []).map(p => ({ time: ct(p.time), value: p.value, color: alpha(p.value >= 0 ? pal.bull : pal.bear, 0.5) })))
     const panes = chart.panes()
     for (let i = 1; i < panes.length; i++) panes[i].setHeight(110)
-  }, [layers.ema, layers.bb, layers.volume, layers.rsi, layers.macd, candles, mapper, palette])
+  }, [layers.ema, layers.bb, layers.volume, layers.rsi, layers.macd, candles, mapper, palette, pct])
 
   // ---- overlays, markers, plan price lines
   useEffect(() => {
@@ -353,6 +536,11 @@ export default function PriceChart({ candles, analysis, visible, layers, highlig
     if (layers.events) for (const ev of candles.events ?? []) {
       const idx = mapper.toLogical(ev.time)
       if (idx == null || idx >= times.length) continue
+      if (ev.kind === 'move') {              // a world stock's big move (GLB): the news tab lists the headlines around it
+        const up = !ev.text.startsWith('-') && !ev.text.startsWith('−')
+        ms.push({ time: ct(times[idx]), position: up ? 'belowBar' : 'aboveBar', shape: up ? 'arrowUp' : 'arrowDown', color: up ? palette.bull : palette.bear, text: ev.text })
+        continue
+      }
       ms.push({ time: ct(times[idx]), position: 'aboveBar', shape: 'square', color: palette.accent, text: ev.text + (ev.applied ? ' (adj.)' : '') })
     }
     for (const p of drawn) {
@@ -444,6 +632,28 @@ export default function PriceChart({ candles, analysis, visible, layers, highlig
           <span>L <b className="text-fg">{fmt(shown.l)}</b></span>
           <span>C <b className="text-fg">{fmt(shown.c)}</b></span>
           {est && <span title="CSE history doesn't include opening prices; open ≈ previous close">* open estimated</span>}
+        </div>
+      )}
+      {textAt && (
+        <form className="absolute z-30 flex gap-1" style={{ left: Math.min(textAt.x, (box.current?.clientWidth ?? 400) - 230), top: Math.max(0, textAt.y - 34) }}
+              onSubmit={e => {
+                e.preventDefault()
+                const L = live.current
+                if (text.trim()) {
+                  const nd: Drawing = { id: newId(), kind: 'text', p1: textAt.p, text: text.trim().slice(0, 80), color: L.drawColor }
+                  L.onDrawings?.([...L.drawings, nd].slice(-MAX_DRAWINGS), nd.id)
+                }
+                setTextAt(null)
+              }}>
+          <input autoFocus className="input w-48 !py-0.5 text-[12px]" value={text} maxLength={80} placeholder="Note on the chart, Enter to place"
+                 aria-label="Text to place on the chart" onChange={e => setText(e.target.value)} onKeyDown={e => { if (e.key === 'Escape') setTextAt(null) }} />
+          <button className="btn btn-primary !py-0">OK</button>
+        </form>
+      )}
+      {tool && (
+        <div className="pointer-events-none absolute bottom-2 left-2 z-10 bg-black/80 px-1.5 py-0.5 text-[11px] text-yellow">
+          {tool === 'hline' ? 'Click a price for a horizontal line' : tool === 'trend' ? 'Click the start, then the end of the trendline'
+            : tool === 'rect' ? 'Click one corner, then the opposite corner' : 'Click where the note goes'} · snaps to the bar's high / low / open / close · Esc to stop
         </div>
       )}
       {hp && hover && (

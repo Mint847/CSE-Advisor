@@ -10,6 +10,7 @@ import CommandLine, { FUNCTIONS } from './components/CommandLine'
 import Account from './pages/Account'
 import Alerts from './pages/Alerts'
 import Calendar from './pages/Calendar'
+import Global from './pages/Global'
 import Heatmap from './pages/Heatmap'
 import Journal from './pages/Journal'
 import Market from './pages/Market'
@@ -34,6 +35,7 @@ const FKEYS: { key: string; label: string; to?: string; help?: boolean }[] = [
   { key: 'F8', label: 'SET', to: '/settings' },
   { key: 'F9', label: 'ALRT', to: '/alerts' },
   { key: 'F10', label: 'NOTE', to: '/notes' },
+  { key: '', label: 'GLB', to: '/global' },
   { key: '', label: 'HMAP', to: '/heatmap' },
   { key: '', label: 'NEWS', to: '/news' },
   { key: '', label: 'CAL', to: '/calendar' },
@@ -67,8 +69,13 @@ function HelpPanel({ onClose }: { onClose: () => void }) {
             <table className="bb-table [&_td]:whitespace-normal"><tbody>
               <tr><td className="text-amber">/</td><td>focus the command line</td></tr>
               {FKEYS.filter(k => k.key).map(k => <tr key={k.key}><td className="text-amber">{k.key}</td><td>{k.label}</td></tr>)}
-              <tr><td className="text-amber">HMAP NEWS CAL</td><td>heatmap, news feed, calendar (menu or command line)</td></tr>
+              <tr><td className="text-amber">GLB HMAP NEWS CAL</td><td>world stocks, heatmap, news feed, calendar (menu or command line)</td></tr>
               <tr><td className="text-amber">P</td><td>stock page: patterns & layers</td></tr>
+              <tr><td className="text-amber">1 – 7</td><td>stock page: timeframe 1M, 5M, 15M, 1H, 4H, 1D, 1W</td></tr>
+              <tr><td className="text-amber">C · L</td><td>stock page: candles / line · log scale on / off</td></tr>
+              <tr><td className="text-amber">[ ]</td><td>stock page: previous / next stock in your list</td></tr>
+              <tr><td className="text-amber">H T B N</td><td>draw a horizontal line, trendline, box, note (drag a drawing to move it)</td></tr>
+              <tr><td className="text-amber">DEL · CTRL+Z</td><td>delete the selected drawing · undo</td></tr>
               <tr><td className="text-amber">↑ ↓ ENTER</td><td>watchlist: move and open</td></tr>
               <tr><td className="text-amber">ESC</td><td>close a panel / clear the command line</td></tr>
             </tbody></table>
@@ -149,7 +156,7 @@ export default function App() {
               </button>
             ) : (
               <NavLink key={k.key} to={k.to!} end={k.to === '/'} className={link}>
-                {k.key && <span className="bg-menu px-1 text-white">{k.key}</span>}{({ WL: 'WATCHLIST', PORT: 'POSITIONS', MKT: 'MARKET', SCR: 'CANDIDATES', JRN: 'JOURNAL', ALRT: 'ALERTS', NOTE: 'NOTES', HMAP: 'HEATMAP', NEWS: 'NEWS', CAL: 'CALENDAR' } as Record<string, string>)[k.label] ?? 'SETTINGS'}
+                {k.key && <span className="bg-menu px-1 text-white">{k.key}</span>}{({ WL: 'WATCHLIST', PORT: 'POSITIONS', MKT: 'MARKET', SCR: 'CANDIDATES', JRN: 'JOURNAL', ALRT: 'ALERTS', NOTE: 'NOTES', GLB: 'WORLD', HMAP: 'HEATMAP', NEWS: 'NEWS', CAL: 'CALENDAR' } as Record<string, string>)[k.label] ?? 'SETTINGS'}
               </NavLink>
             ))}
             <span className="ml-auto hidden shrink-0 pl-3 text-[11px] text-muted md:inline">type <b className="text-yellow">/</b> for the command line · <b className="text-yellow">HELP &lt;GO&gt;</b></span>
@@ -169,6 +176,8 @@ export default function App() {
           <Route path="/journal" element={<Journal />} />
           <Route path="/alerts" element={<Alerts />} />
           <Route path="/heatmap" element={<Heatmap />} />
+          <Route path="/global" element={<Global />} />
+          <Route path="/global/:symbol" element={<StockDetail world />} />
           <Route path="/news" element={<News />} />
           <Route path="/calendar" element={<Calendar />} />
           <Route path="/quote/:symbol" element={<Quote />} />

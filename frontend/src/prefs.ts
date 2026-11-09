@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { ALL_ENGINES, api, type CatalogEntry, type ChartStyle, type EngineMask, type Pattern } from './api'
-import { DEFAULT_LAYERS, type Layers } from './chart/PriceChart'
+import { DEFAULT_LAYERS, type Layers, type ScaleMode } from './chart/PriceChart'
+import type { Drawing } from './chart/drawings'
 
 export type Mode = 'top5' | 'high' | 'all' | 'none'
 export type PlanEngine = 'original' | 'analyst' | 'smc' | 'both'   // 'both' = every engine (kept for saved prefs)
@@ -17,6 +18,8 @@ export interface StockPrefs {
   preset: string | null
   chartStyle: ChartStyle                   // candlesticks or a close-price line
   engines: EngineMask                      // whose drawings are shown: Classic, Levels, SMC
+  scale?: ScaleMode                        // price scale: normal, logarithmic or % change
+  compare?: string[]                       // up to 4 series drawn as % change beside the stock (daily chart)
   v?: number                               // preference version: 2 = candlestick patterns off by default
 }
 export const CATEGORIES = ['chart_pattern', 'liquidity', 'divergence', 'candlestick']
@@ -28,7 +31,7 @@ export const CATEGORY_LABEL: Record<string, string> = { chart_pattern: 'Chart', 
 export const DEFAULT_PREFS: StockPrefs = {
   mode: 'top5', categories: DEFAULT_CATEGORIES, directions: ['bullish', 'bearish', 'neutral'],
   statuses: ['forming', 'confirmed', 'failed'], maxAge: 90, overrides: {}, levelOverrides: {}, layers: DEFAULT_LAYERS,
-  planEngine: 'both', preset: 'both', chartStyle: 'candles', engines: ALL_ENGINES, v: PREFS_VERSION,
+  planEngine: 'both', preset: 'both', chartStyle: 'candles', engines: ALL_ENGINES, scale: 'normal', compare: [], v: PREFS_VERSION,
 }
 
 const OFF = Object.fromEntries(Object.keys(DEFAULT_LAYERS).map(k => [k, false])) as unknown as Layers
@@ -135,4 +138,44 @@ export function filterPatterns(all: Pattern[], prefs: StockPrefs, enabled: (t: s
     .sort((a, b) => b.priority - a.priority)
   const isAnalystVisible = (p: Pattern) => prefs.levelOverrides[p.id] ?? prefs.layers.apat
   return { listed, analystPatterns, visible: [...listed.filter(isVisible), ...analystPatterns.filter(isAnalystVisible)], isVisible, isAnalystVisible }
+}
+
+
+/** Your drawings on one stock's chart, saved for your account (UserPref `draw:<symbol>`), with undo. */
+export function useDrawings(symbol: string) {
+  const [drawings, setDrawings] = useState<Drawing[]>([])
+  const [selected, setSelected] = useState<string | null>(null)
+  const list = useRef<Drawing[]>([])
+  const past = useRef<Drawing[][]>([])
+  const timer = useRef<number | undefined>(undefined)
+  const key = `draw:${symbol}`
+  useEffect(() => {
+    let alive = true
+    list.current = []; past.current = []
+    setDrawings([]); setSelected(null)
+    api.getPref<Drawing[]>(key).then(v => { if (alive && Array.isArray(v)) { list.current = v; setDrawings(v) } }).catch(() => {})
+    return () => { alive = false }
+  }, [key])
+  const save = (next: Drawing[]) => {
+    window.clearTimeout(timer.current)
+    timer.current = window.setTimeout(() => { api.putPref(key, next).catch(() => {}) }, 300)
+  }
+  const commit = (next: Drawing[], select?: string | null) => {
+    past.current = [...past.current.slice(-49), list.current]
+    list.current = next
+    setDrawings(next)
+    if (select !== undefined) setSelected(select)
+    save(next)
+  }
+  const undo = () => {
+    const prev = past.current.pop()
+    if (!prev) return
+    list.current = prev
+    setDrawings(prev)
+    setSelected(null)
+    save(prev)
+  }
+  const remove = (id: string) => commit(list.current.filter(d => d.id !== id), null)
+  const recolor = (id: string, color: string) => commit(list.current.map(d => d.id === id ? { ...d, color } : d), id)
+  return { drawings, selected, select: setSelected, commit, undo, remove, recolor, clear: () => commit([], null), canUndo: past.current.length > 0 }
 }

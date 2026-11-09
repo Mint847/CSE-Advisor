@@ -27,6 +27,7 @@ export const FUNCTIONS: { code: string; text: string; global?: boolean }[] = [
   { code: 'MKT', text: 'Market (ASPI, breadth); also WEI', global: true },
   { code: 'SCR', text: 'Candidates: ranking of all liquid CSE stocks', global: true },
   { code: 'JRN', text: 'Forward-test journal: calls scored by what happened', global: true },
+  { code: 'GLB', text: 'World stocks: NVIDIA, SK Hynix, big tech... with the news around their big moves', global: true },
   { code: 'HMAP', text: 'Market heatmap by sector (size = market cap, colour = day change)', global: true },
   { code: 'NEWS', text: 'News & announcements feed (my stocks / all tracked)', global: true },
   { code: 'CAL', text: 'Calendar: results due, ex-dividend, payments, AGMs', global: true },
@@ -39,7 +40,7 @@ export const FUNCTIONS: { code: string; text: string; global?: boolean }[] = [
 ]
 const TAB_OF: Record<string, string> = { GP: 'rec', CMP: 'cmp', SMC: 'smc', DES: 'des', LIQ: 'liq', CN: 'cn', CAT: 'cn', CACS: 'cacs', NOTE: 'note', PAT: 'rec' }
 const TF_OF: Record<string, string> = { '1M': '1m', '5M': '5m', '15M': '15m', '1H': '1h', '4H': '4h', '1D': '1D', '1W': '1W' }
-const GLOBAL_ROUTE: Record<string, string> = { WL: '/', ALL: '/?view=all', PORT: '/positions', MKT: '/market', WEI: '/market', SCR: '/screener', JRN: '/journal', HMAP: '/heatmap', NEWS: '/news', CAL: '/calendar', ALRT: '/alerts', ALERTS: '/alerts', NOTES: '/notes', SET: '/settings', ACCT: '/account' }
+const GLOBAL_ROUTE: Record<string, string> = { WL: '/', ALL: '/?view=all', PORT: '/positions', MKT: '/market', WEI: '/market', SCR: '/screener', JRN: '/journal', GLB: '/global', WORLD: '/global', HMAP: '/heatmap', NEWS: '/news', CAL: '/calendar', ALRT: '/alerts', ALERTS: '/alerts', NOTES: '/notes', SET: '/settings', ACCT: '/account' }
 
 interface Props { onHelp: () => void; inputRef: React.RefObject<HTMLInputElement | null> }
 
@@ -54,7 +55,8 @@ export default function CommandLine({ onHelp, inputRef }: Props) {
   const [msg, setMsg] = useState<string | null>(null)
   const listId = 'cmd-suggestions'
   const blurTimer = useRef<number | undefined>(undefined)
-  const listed = useRef<{ symbol: string; name: string }[] | null>(null)    // every CSE-listed stock, fetched the first time one is needed
+  const listed = useRef<{ symbol: string; name: string }[] | null>(null)
+  const worldList = useRef<{ symbol: string; ticker: string }[] | null>(null)   // the GLB stocks, fetched the first time one is needed    // every CSE-listed stock, fetched the first time one is needed
 
   // the tracked stocks, fetched once and again only when the list changes (add / remove), not on every click
   useEffect(() => {
@@ -116,6 +118,10 @@ export default function CommandLine({ onHelp, inputRef }: Props) {
     if (a === 'NOTE' && !currentSym) { nav('/notes'); setQ(''); return }          // NOTE on a stock page = that stock's notes; elsewhere = all notes
     const sym = resolve(a)
     if (!sym) {
+      // a world stock on the GLB page (NVDA, MU, 000660...)
+      try { worldList.current ??= (await api.globalList()).rows.map(r => ({ symbol: r.symbol, ticker: r.ticker })) } catch { /* offline */ }
+      const w = (worldList.current ?? []).find(r => r.ticker.toUpperCase() === a || r.symbol.toUpperCase() === a)
+      if (w) { nav(`/global/${encodeURIComponent(w.symbol)}`); setQ(''); return }
       // not followed: if the CSE lists it, show its quote card (read-only, with an Add button)
       try { listed.current ??= await api.listed() } catch { /* offline: fall through to the message */ }
       const hit = (listed.current ?? []).filter(s => s.symbol.toUpperCase() === a || ticker(s.symbol).toUpperCase() === a)

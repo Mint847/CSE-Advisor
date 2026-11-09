@@ -361,6 +361,74 @@ class ListedMeta(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 
+# ---------------------------------------------------------------- world stocks (globalstocks.py): shared data, like CSE prices
+class GlobalStock(Base):
+    """A stock on another exchange that the app follows (NVIDIA, SK Hynix...): TradingView's EXCHANGE:TICKER id."""
+    __tablename__ = "global_stocks"
+    symbol: Mapped[str] = mapped_column(String(40), primary_key=True)        # e.g. NASDAQ:NVDA, KRX:000660
+    name: Mapped[str] = mapped_column(String(200))
+    group: Mapped[str] = mapped_column(String(60), default="Other")          # "AI & chips", "Big tech" ...
+    aliases: Mapped[list[str]] = mapped_column(JSON, default=list)           # names news uses: Nvidia, Jensen Huang
+    currency: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    added_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class GlobalPrice(Base):
+    """Daily bars in the exchange's own time and currency (TradingView; splits are already adjusted)."""
+    __tablename__ = "global_prices"
+    __table_args__ = (UniqueConstraint("symbol", "date"),)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    symbol: Mapped[str] = mapped_column(String(40), index=True)
+    date: Mapped[date] = mapped_column(Date, index=True)
+    open: Mapped[float] = mapped_column(Float)
+    high: Mapped[float] = mapped_column(Float)
+    low: Mapped[float] = mapped_column(Float)
+    close: Mapped[float] = mapped_column(Float)
+    volume: Mapped[float] = mapped_column(Float, default=0)
+
+
+class GlobalAnalysis(Base):
+    """The three engines on a world stock's daily bars, one row per session (untested outside the CSE)."""
+    __tablename__ = "global_analysis"
+    __table_args__ = (UniqueConstraint("symbol", "date"),)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    symbol: Mapped[str] = mapped_column(String(40), index=True)
+    date: Mapped[date] = mapped_column(Date, index=True)
+    verdict: Mapped[str] = mapped_column(String(10))
+    score: Mapped[float] = mapped_column(Float)
+    verdict_analyst: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    score_analyst: Mapped[float | None] = mapped_column(Float, nullable=True)
+    verdict_smc: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    score_smc: Mapped[float | None] = mapped_column(Float, nullable=True)
+    result: Mapped[dict[str, Any]] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class GlobalMove(Base):
+    """A session on which a world stock moved more than global_stocks.move_pct; news_checked once the headlines
+    around it have been searched for."""
+    __tablename__ = "global_moves"
+    symbol: Mapped[str] = mapped_column(String(40), primary_key=True)
+    date: Mapped[date] = mapped_column(Date, primary_key=True)
+    pct: Mapped[float] = mapped_column(Float)
+    news_checked: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
+class GlobalHeadline(Base):
+    """A headline about a world stock (Google News, titles and links only). Kept apart from the CSE headlines so the
+    two matchers never overwrite each other's tags. `move_date` is set when it was found by searching around a big move."""
+    __tablename__ = "global_headlines"
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)           # hash of the link
+    symbol: Mapped[str] = mapped_column(String(40), primary_key=True)
+    title: Mapped[str] = mapped_column(String(400))
+    link: Mapped[str] = mapped_column(String(600))
+    outlet: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    published: Mapped[datetime | None] = mapped_column(DateTime, index=True, nullable=True)   # Colombo wall time
+    tone: Mapped[float | None] = mapped_column(Float, nullable=True)
+    move_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    fetched_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
 class UserAlert(Base):
     """One account's own alert rule on a stock (price crosses a level, big day move, volume spike, a new pattern...).
     `params` depends on `kind` (alerts.KINDS). It fires at most once a day; `once` rules switch themselves off after firing."""

@@ -247,6 +247,23 @@ export interface KeyStats {
   sector: string | null; industry: string | null; isin: string | null
 }
 export interface QuoteCard { quote: AllStock; stats: KeyStats; lists: number[]; held: boolean; tracked: boolean }
+export interface GlobalQuote {
+  close: number | null; change_pct: number | null; change?: number | null; open?: number | null; high?: number | null; low?: number | null
+  volume?: number | null; avg_volume_30d?: number | null; market_cap?: number | null; currency?: string | null; sector?: string | null; industry?: string | null
+  hi_52w?: number | null; lo_52w?: number | null; perf_w?: number | null; perf_1m?: number | null; perf_3m?: number | null; perf_ytd?: number | null; perf_1y?: number | null
+  pe?: number | null; div_yield?: number | null; delay_min?: number | null; name?: string | null; stored?: boolean
+}
+export interface GlobalHeadline { title: string; link: string; outlet: string | null; published: string | null; tone: number | null; market: boolean }
+export interface GlobalRow {
+  symbol: string; ticker: string; exchange: string; name: string; group: string; currency: string | null; quote: GlobalQuote | null; spark: number[]
+  analysis: { date: string; verdict: Verdict; score: number; verdict_analyst: Verdict | null; score_analyst: number | null; verdict_smc: Verdict | null; score_smc: number | null } | null
+  move: { date: string; pct: number; headline: GlobalHeadline | null } | null
+  headline: GlobalHeadline | null
+}
+export interface GlobalList { rows: GlobalRow[]; groups: string[]; move_pct: number; run: { at: string; ok: boolean } | null; running: boolean }
+export interface GlobalMoveRow { date: string; pct: number; checked: boolean; headlines: GlobalHeadline[] }
+export interface GlobalNews { symbol: string; name: string; aliases: string[]; move_pct: number; moves: GlobalMoveRow[]; recent: GlobalHeadline[]; searching: boolean }
+export interface GlobalQuoteCard { symbol: string; name: string; group: string; aliases: string[]; quote: GlobalQuote | null }
 export interface AllStocksData { lists: WatchList[]; count: number; rows: AllStock[] }
 export interface HealthSource { key: string; label: string; as_of: string | null; stale: boolean; kind: 'session' | 'days' | 'time' }
 export interface StepResult { ok: boolean; s?: number; error?: string; n?: number; failed?: Record<string, string>; failed_feeds?: string[] }
@@ -344,6 +361,17 @@ export const api = {
   health: () => req<Health>('/api/health'),
   addPosition: (p: Partial<PositionRow>) => req('/api/positions', { method: 'POST', body: JSON.stringify(p) }),
   closePosition: (id: number, exit_date: string, exit_price: number, review?: string) => req(`/api/positions/${id}/close`, { method: 'POST', body: JSON.stringify({ exit_date, exit_price, review: review || null }) }),
+  globalList: () => req<GlobalList>('/api/global'),
+  worldAdd: (query: string, group: string) => req<{ symbol: string; name: string }>('/api/global', { method: 'POST', body: JSON.stringify({ query, group }) }),
+  worldEdit: (s: string, e: { group?: string; aliases?: string[]; name?: string }) => req(`/api/global/${encodeURIComponent(s)}`, { method: 'PUT', body: JSON.stringify(e) }),
+  worldDelete: (s: string) => req(`/api/global/${encodeURIComponent(s)}`, { method: 'DELETE' }),
+  worldRun: () => req<{ started: boolean }>('/api/global/run', { method: 'POST' }),
+  worldAnalysis: (s: string, tf: string = '1D') => req<Analysis>(`/api/global/${encodeURIComponent(s)}/analysis?tf=${tf}`),
+  worldCandles: (s: string, tf: string = '1D') => req<Candles>(`/api/global/${encodeURIComponent(s)}/candles?tf=${tf}`),
+  worldQuote: (s: string) => req<GlobalQuoteCard>(`/api/global/${encodeURIComponent(s)}/quote`),
+  worldNews: (s: string) => req<GlobalNews>(`/api/global/${encodeURIComponent(s)}/news`),
+  compare: (ids: string[]) => req<{ series: Record<string, { label: string; points: { time: string; value: number }[]; error?: string }> }>(`/api/compare?symbols=${encodeURIComponent(ids.join(','))}`),
+  compareOptions: () => req<{ indices: { id: string; label: string }[]; cse: { id: string; label: string; name: string }[]; world: { id: string; label: string; name: string }[] }>('/api/compare/options'),
   heatmap: () => req<Heatmap>('/api/heatmap'),
   feed: (f: { scope: string; kind: string; tone: string; q: string; days: number; symbol?: string }) => {
     const sp = new URLSearchParams({ scope: f.scope, kind: f.kind, tone: f.tone, q: f.q, days: String(f.days) }); if (f.symbol) sp.set('symbol', f.symbol)
