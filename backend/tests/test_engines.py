@@ -79,3 +79,18 @@ def test_smc_engine_is_independent(kz):
         assert all(st["kind"] in {"order_block", "fvg", "bos_retest", "weekly_ob"} for st in s["setups"])
     from cse_advisor.strategy.recommend import original_patterns
     assert not any(p["engine"] == "smc" for p in original_patterns(kz["2026-04-09"]["patterns"]))
+
+
+def test_value_note_survives_a_nav_with_no_discount_figure():
+    """ACME (10 Nov 2026): NAV per share was known but the price-to-NAV discount was None, so formatting it raised and the evening
+    analysis for the stock failed. The note is written without the percentage instead."""
+    from cse_advisor.strategy.analyst import _explain_levels
+    expl = {"reasons_for": [], "reasons_against": []}
+    f = {"has_data": True, "ratios": {"nav_per_share": 5.0, "price_to_nav_discount_pct": None}, "relative": {}}
+    _explain_levels(expl, "WATCH", None, [], {}, 10.0, 0.5, f, {}, {})
+    text = " ".join(x["text"] for x in expl["reasons_for"] + expl["reasons_against"])
+    assert "NAV per share 5.00 vs price 10.00" in text and "%" not in text.split("NAV per share")[1].split(".")[0]
+    f["ratios"]["price_to_nav_discount_pct"] = -35.0
+    expl2 = {"reasons_for": [], "reasons_against": []}
+    _explain_levels(expl2, "WATCH", None, [], {}, 10.0, 0.5, f, {}, {})
+    assert "(-35%)" in " ".join(x["text"] for x in expl2["reasons_for"] + expl2["reasons_against"])

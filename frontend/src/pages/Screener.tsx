@@ -2,6 +2,9 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api, fmt, ticker, type ScreenerData, type ScreenerRow } from '../api'
 import { useSession } from '../auth/session'
+import ExportCsv from '../components/ExportCsv'
+import type { CsvColumn } from '../export/csv'
+import QuantCells from '../components/QuantCells'
 import { useSort } from '../components/sort'
 import { ErrorBox, Spinner } from '../components/ui'
 
@@ -12,7 +15,18 @@ const tone = (x: number | null | undefined) => x == null ? 'text-muted' : x >= 0
 const GET: Record<string, (r: ScreenerRow) => number | string | null> = {
   ticker: r => ticker(r.symbol), last: r => r.close, chg: r => r.chg1d, r20: r => r.ret20, r60: r => r.ret60, r120: r => r.ret120,
   vs: r => r.rs120, d52: r => r.dist52, rank: r => r.rs_rank, turn: r => r.turn,
+  vol: r => r.quant?.vol ?? null, sharpe: r => r.quant?.sharpe ?? null, beta: r => r.quant?.beta ?? null, mdd: r => r.quant?.mdd ?? null,
 }
+
+const CSV: CsvColumn<ScreenerRow>[] = [
+  { header: 'Ticker', get: r => ticker(r.symbol) }, { header: 'Name', get: r => r.name }, { header: 'Last', get: r => r.close }, { header: 'Change today %', get: r => (r.chg1d == null ? null : r.chg1d * 100) },
+  { header: 'Return 1 month %', get: r => (r.ret20 == null ? null : r.ret20 * 100) }, { header: 'Return 3 months %', get: r => (r.ret60 == null ? null : r.ret60 * 100) },
+  { header: 'Return 6 months %', get: r => (r.ret120 == null ? null : r.ret120 * 100) }, { header: 'Return vs ASPI, 6 months (pts)', get: r => (r.rs120 == null ? null : r.rs120 * 100) },
+  { header: 'From 52-week high %', get: r => (r.dist52 == null ? null : r.dist52 * 100) }, { header: 'Strength rank (percentile)', get: r => (r.rs_rank == null ? null : r.rs_rank * 100) },
+  { header: 'Typical daily turnover (LKR)', get: r => r.turn }, { header: 'Volatility 1Y %', get: r => (r.quant?.vol == null ? null : r.quant.vol * 100) }, { header: 'Sharpe 1Y', get: r => r.quant?.sharpe },
+  { header: 'Beta 1Y', get: r => r.quant?.beta }, { header: 'Worst fall 1Y %', get: r => (r.quant?.mdd == null ? null : r.quant.mdd * 100) },
+  { header: 'Uptrend', get: r => r.trendup }, { header: 'Rule parts met (of 3)', get: r => r.hits }, { header: 'Meets the rule', get: r => r.qualifies }, { header: 'On my watchlist', get: r => r.on_watchlist },
+]
 
 function Check({ ok, label }: { ok: boolean; label: string }) {
   return <span className={`inline-block w-[1.2em] text-center ${ok ? 'text-bull' : 'text-bear'}`} title={`${label}: ${ok ? 'met' : 'not met'}`} aria-label={`${label} ${ok ? 'met' : 'not met'}`}>{ok ? '●' : '○'}</span>
@@ -92,6 +106,7 @@ export default function Screener() {
               <span className="ml-auto flex gap-1" role="radiogroup" aria-label="Show">
                 {([['rule', 'Meets the rule'], ['two', '2 of 3'], ['all', 'All liquid']] as [Filter, string][]).map(([k, l]) =>
                   <button key={k} role="radio" aria-checked={filter === k} className="btn !py-0.5" aria-pressed={filter === k} onClick={() => setFilter(k)}>{l}</button>)}
+                <ExportCsv name="candidates" columns={CSV} rows={rows} />
               </span>
             </div>
             {rows.length === 0 ? (
@@ -107,6 +122,7 @@ export default function Screener() {
                       {th('r20', '20D', 'hidden text-right md:table-cell')}{th('r60', '60D', 'hidden text-right md:table-cell')}{th('r120', '120D', 'text-right')}
                       {th('vs', 'vs ASPI', 'hidden text-right md:table-cell')}{th('d52', 'From 52W high', 'text-right')}
                       {th('rank', 'RS rank', 'hidden text-right md:table-cell')}{th('turn', 'Turnover/day', 'hidden text-right lg:table-cell')}
+                      {th('vol', '1Y vol', 'hidden text-right xl:table-cell')}{th('sharpe', 'Sharpe', 'hidden text-right xl:table-cell')}{th('beta', 'Beta', 'hidden text-right xl:table-cell')}{th('mdd', 'Worst fall', 'hidden text-right xl:table-cell')}
                       <th title="1) uptrend  2) within 10% of the 52-week high  3) top 40% by 120-day return">Rule</th><th>Watchlist</th>
                     </tr>
                   </thead>
@@ -125,6 +141,7 @@ export default function Screener() {
                         <td className="text-right num">{r.dist52 == null ? '–' : `${(r.dist52 * 100).toFixed(1)}%`}</td>
                         <td className="hidden text-right num md:table-cell">{r.rs_rank == null ? '–' : `${(r.rs_rank * 100).toFixed(0)}th`}</td>
                         <td className="hidden text-right num lg:table-cell">{r.turn == null ? '–' : `${(r.turn / 1e6).toFixed(1)}M`}</td>
+                        <QuantCells q={r.quant} cls="hidden text-right num xl:table-cell" />
                         <td><Check ok={r.trendup} label="Uptrend" /><Check ok={(r.dist52 ?? -1) > -0.1} label="Within 10% of the 52-week high" /><Check ok={(r.rs_rank ?? 0) >= 0.6} label="Top 40% by 120-day return" /></td>
                         <td>{r.on_watchlist ? <span className="text-muted">on watchlist</span>
                           : <button className="btn !py-0 text-[11px]" disabled={adding === r.symbol} onClick={e => { e.stopPropagation(); add(r) }}>{adding === r.symbol ? 'Adding…' : '+ADD'}</button>}</td>

@@ -20,6 +20,9 @@ dependencies = [
   "python-dotenv",
   "pypdf",
   "pyjwt[crypto]>=2.8",   # verifying Firebase ID tokens (sign-in)
+  "gs-quant==2.2.5",      # Goldman Sachs' quant maths (offline parts only), pinned: the QNT figures are tested against it
+  "wrapt==2.5.2",         # a gs-quant dependency would otherwise pull a pre-release
+  "openpyxl",             # reading the CBSL Excel tables (T-bill rate)
 ]
 
 [project.optional-dependencies]

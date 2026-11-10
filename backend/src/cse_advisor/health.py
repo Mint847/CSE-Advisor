@@ -7,6 +7,7 @@ record (jobs._Steps) says which step failed; a run that finished but had a faile
 from __future__ import annotations
 
 import json
+import logging
 from datetime import date, datetime, timedelta
 from typing import Any
 
@@ -67,10 +68,16 @@ def health(s: Session, now: datetime, session: date, running: bool = False, admi
     run = s.scalar(select(func.max(ScreenerRun.date)))
     if run is not None:
         sources.append(day_source("screener", "Candidate ranking", run))
-    world = s.scalar(select(func.max(MacroDaily.date)))
+    from .macro import SERIES as WORLD_CODES
+    world = s.scalar(select(func.max(MacroDaily.date)).where(MacroDaily.code.in_(list(WORLD_CODES))))
     if world is not None:
         sources.append({"key": "world", "label": "World markets", "as_of": world.isoformat(), "kind": "days",
                         "stale": (now.date() - world).days > WORLD_MAX_AGE_DAYS})
+    from .quant.rates import STALE_DAYS, TBILL
+    tbill = s.scalar(select(func.max(MacroDaily.date)).where(MacroDaily.code == TBILL))
+    if tbill is not None:                                   # CBSL publishes month-end T-bill yields about a month late
+        sources.append({"key": "rates", "label": "T-bill rate (CBSL)", "as_of": tbill.isoformat(), "kind": "days",
+                        "stale": (now.date() - tbill).days > STALE_DAYS})
     fetched = s.scalar(select(func.max(Headline.fetched_at)))                  # UTC
     if fetched is not None:
         age = (datetime.utcnow() - fetched).total_seconds() / 3600
@@ -99,5 +106,11 @@ def health(s: Session, now: datetime, session: date, running: bool = False, admi
         status = "partial"
     else:
         status = "ok"
+    from .quant import checks
+    try:
+        spikes = checks.price_spikes(s, [x for (x,) in s.execute(select(PriceDaily.symbol).distinct())])
+    except Exception as exc:  # noqa: BLE001 - an extra check must never take the strip down
+        logging.getLogger(__name__).warning("spike check: %s", exc)
+        spikes = []
     return {"status": status, "session": session.isoformat(), "expected": want.isoformat(), "running": running, "sources": sources,
-            "run": info, "stale": stale}
+            "run": info, "stale": stale, "spikes": {"count": len(spikes), "items": spikes[:10] if admin else []}}

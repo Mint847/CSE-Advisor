@@ -161,6 +161,11 @@ def run_eod(notify: bool = True, only: list[str] | None = None, late: str | None
         out["headline_reader"] = read_headlines(syms)        # Claude when switched on; the keyword tone otherwise
         if "error" in out["headline_reader"]:
             steps.fail("headline reader", str(out["headline_reader"]["error"]))
+        with steps.step("rates"):                       # the risk-free rate for the quant figures (CBSL T-bills, weekly at most)
+            from .quant import rates
+            out["rates"] = rates.top_up()
+            if out["rates"].get("tbill_error"):
+                raise RuntimeError("CBSL T-bill rate: " + out["rates"]["tbill_error"])
         with steps.step("world series"):
             from . import macro
             with SessionLocal.begin() as s:
@@ -428,6 +433,11 @@ def startup_catch_up() -> None:
     """If the PC was off at the scheduled time, run the missed EOD job now; then make sure every watchlist
     stock (and the ASPI) has intraday history and the sector table has some history."""
     log.info("startup: %s", ensure_fresh())
+    try:
+        from .quant import rates
+        log.info("rates: %s", rates.top_up())
+    except Exception as exc:  # noqa: BLE001
+        log.warning("rates refresh failed: %s", exc)
     try:
         from . import listed_meta
         log.info("sectors: %s", listed_meta.top_up())

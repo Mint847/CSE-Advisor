@@ -46,6 +46,10 @@ def summarize(positions: list[dict[str, Any]], capital: float | None, fee_pct: f
             at_risk += (r["market_value"] * (1 - fee_pct / 100)) - (r["cost"] + r["pl_at_stop"])
         else:
             no_stop.append(p["symbol"])
+    f = fee_pct / 100
+    fees_paid = sum(float(p["quantity"]) * float(p["entry_price"]) * f for p in positions) \
+        + sum(float(p["quantity"]) * float(p["exit_price"]) * f for p in closed if p.get("exit_price") is not None)
+    fees_to_sell = sum((rows[p["id"]].get("market_value") or 0) * f for p in open_)
     by_stock = sorted(({"symbol": p["symbol"], "value": rows[p["id"]].get("market_value") or 0} for p in open_), key=lambda x: -x["value"])
     by_sector: dict[str, float] = {}
     for p in open_:
@@ -54,7 +58,7 @@ def summarize(positions: list[dict[str, Any]], capital: float | None, fee_pct: f
     out = {
         "open_positions": len(open_), "invested": round(cost_open, 2), "market_value": round(mv, 2),
         "unrealised_net": round(unreal, 2), "unrealised_net_pct": round(100 * unreal / cost_open, 2) if cost_open else None,
-        "realised_net": round(real, 2), "risk_to_stops": round(at_risk, 2), "positions_without_stop": no_stop,
+        "realised_net": round(real, 2), "fees_paid": round(fees_paid, 2), "fees_to_sell_open": round(fees_to_sell, 2), "risk_to_stops": round(at_risk, 2), "positions_without_stop": no_stop,
         "largest": {**by_stock[0], "pct": pct(by_stock[0]["value"])} if by_stock else None,
         "by_stock": [{**x, "pct": pct(x["value"])} for x in by_stock],
         "by_sector": [{"sector": k, "value": round(v, 2), "pct": pct(v)} for k, v in sorted(by_sector.items(), key=lambda kv: -kv[1])],

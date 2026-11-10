@@ -9,6 +9,7 @@ import WorldNews, { WorldStats } from '../components/WorldNews'
 import { StockStats } from '../components/KeyStats'
 import CorporatePanel from '../components/CorporatePanel'
 import NotesPanel from '../components/NotesPanel'
+import QuantTab from '../components/QuantTab'
 import FundamentalsTab from '../components/FundamentalsTab'
 import LiquidityTab from '../components/LiquidityTab'
 import CatalystsTab, { OverallBadge } from '../components/CatalystsTab'
@@ -27,12 +28,14 @@ const TABS = [
   { id: 'liq', code: 'LIQ', label: 'Liquidity & levels' },
   { id: 'cn', code: 'CN', label: 'Catalysts & news' },
   { id: 'cacs', code: 'CACS', label: 'Corporate actions & data' },
+  { id: 'qnt', code: 'QNT', label: 'Quant' },
   { id: 'note', code: 'NOTE', label: 'Notes' },
 ] as const
 /** A world stock (GLB) has no CSE fundamentals, catalysts or corporate actions: its own news tab and the engines. */
 const WORLD_TABS = [
   { id: 'news', code: 'NEWS', label: 'Moves & headlines' },
   { id: 'rec', code: 'REC', label: 'Recommendation' },
+  { id: 'qnt', code: 'QNT', label: 'Quant' },
 ] as const
 type TabId = (typeof TABS)[number]['id'] | (typeof WORLD_TABS)[number]['id']
 
@@ -469,7 +472,7 @@ export default function StockDetail({ world = false }: { world?: boolean } = {})
         ))}
       </nav>
       <div className="py-3">
-        {tab === 'news' && world ? <WorldNews symbol={symbol} /> : !daily ? <Spinner /> : tab === 'rec' ? (a ? <RecommendationTab a={a} view={view} onView={v => setQuery({ tab: 'rec', view: v })}
+        {tab === 'news' && world ? <WorldNews symbol={symbol} /> : tab === 'qnt' ? <QuantTab symbol={symbol} world={world} /> : !daily ? <Spinner /> : tab === 'rec' ? (a ? <RecommendationTab a={a} view={view} onView={v => setQuery({ tab: 'rec', view: v })}
                                                              onPattern={id => { selectPattern(id); window.scrollTo({ top: 0, behavior: 'smooth' }) }} />
                                                   : <p className="text-[12px] text-muted">No {TF_LABEL[tf]} analysis yet (see above). Switch to 1D for the nightly analysis.</p>)
           : tab === 'des' ? <FundamentalsTab symbol={symbol} onSaved={loadAnalysis} />

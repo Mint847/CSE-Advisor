@@ -129,7 +129,7 @@ export interface Portfolio {
   open_positions: number; invested: number; market_value: number; unrealised_net: number; unrealised_net_pct: number | null; realised_net: number
   risk_to_stops: number; positions_without_stop: string[]; largest: { symbol: string; value: number; pct: number | null } | null
   by_stock: { symbol: string; value: number; pct: number | null }[]; by_sector: { sector: string; value: number; pct: number | null }[]
-  fee_pct_per_side: number; rows: Record<string, PortfolioFigures>
+  fee_pct_per_side: number; fees_paid?: number; fees_to_sell_open?: number; rows: Record<string, PortfolioFigures>
   capital?: number; invested_pct_of_capital?: number; risk_to_stops_pct_of_capital?: number; cash_estimate?: number
 }
 export interface Liquidity {
@@ -208,12 +208,17 @@ export interface Fundamentals {
 }
 export interface FundDetail { report_id?: number; title?: string; url?: string; column?: string | null; evidence?: Record<string, string>; checks?: string[]; comparative?: boolean; confirmed?: boolean; nav_per_share?: number | null }
 export interface AnnouncementRow { id: number; date: string | null; title: string; body: string | null; category: string | null; sentiment: number | null; materiality: number | null }
-export interface PositionRow { id: number; symbol: string; entry_date: string; entry_price: number; quantity: number; stop: number | null; target: number | null; closed: boolean; exit_date: string | null; exit_price: number | null; notes: string | null; price: number | null; review: PositionReview | null; verdict: Verdict | null; review_analyst?: PositionReview | null; verdict_analyst?: Verdict | null; review_smc?: PositionReview | null; verdict_smc?: Verdict | null; warnings?: ExitWarning[] }
+/** A split, bonus or rights issue recorded after the buy date; for a split/bonus, the quantity and price in today's shares. */
+export interface CorpHint { id: number; kind: string; ex_date: string; ratio: string | null; share_multiplier: number | null; text: string; suggest?: { quantity: number; entry_price: number } }
+export interface CostInfo { per_side_pct: number; slippage_pct: number; parts: { label: string; pct: number }[] }
+export interface PositionRow { id: number; symbol: string; entry_date: string; entry_price: number; quantity: number; stop: number | null; target: number | null; closed: boolean; exit_date: string | null; exit_price: number | null; notes: string | null; price: number | null; review: PositionReview | null; verdict: Verdict | null; review_analyst?: PositionReview | null; verdict_analyst?: Verdict | null; review_smc?: PositionReview | null; verdict_smc?: Verdict | null; warnings?: ExitWarning[]; corp_since_entry?: CorpHint[] }
 export interface ExitWarning { kind: 'pattern' | 'trend'; id: string | null; title: string; text: string; crossed_today?: boolean }
+/** One year of daily prices: volatility, Sharpe, beta to the ASPI and the worst fall (same maths as the QNT tab). */
+export interface QuantCols { vol: number | null; sharpe: number | null; beta: number | null; mdd: number | null }
 export interface ScreenerRow {
   symbol: string; name: string; close: number | null; chg1d: number | null; ret20: number | null; ret60: number | null; ret120: number | null
   rs120: number | null; dist52: number | null; ext20: number | null; trendup: boolean; above50: boolean; turn: number | null; rs_rank: number | null
-  qualifies: boolean; hits: number; missing: string[]; reason: string; on_watchlist: boolean
+  qualifies: boolean; hits: number; missing: string[]; reason: string; on_watchlist: boolean; quant?: QuantCols | null
 }
 export interface ScreenerData {
   run: { date: string; created_at: string; rows: ScreenerRow[]; meta: { rule: string; tested: string; checked: number; failed: string[]; liquid: number; qualifying: number
@@ -232,13 +237,13 @@ export interface ListsInfo { lists: WatchList[]; portfolio: number; max_lists: n
 export interface AllStock {
   symbol: string; name: string; price: number | null; change_pct: number | null; volume: number | null; turnover: number | null
   trades: number | null; market_cap: number | null; traded: string | null; sector?: string | null; industry?: string | null
-  lists: number[]; held: boolean; candidate: { qualifies: boolean; hits: number; rs_rank: number | null } | null
+  lists: number[]; held: boolean; candidate: { qualifies: boolean; hits: number; rs_rank: number | null } | null; quant?: QuantCols | null
 }
 export interface HeatStock { symbol: string; name: string; price: number; change_pct: number; turnover: number; market_cap: number; sector: string; industry: string | null; mine: boolean }
 export interface Heatmap { stocks: HeatStock[]; meta_age_days: number | null; indices: { code: string; name: string; change_pct: number | null; value: number | null }[]; indices_date: string | null }
 export interface FeedItem { type: 'announcement' | 'headline'; id: string; at: string | null; title: string; source: string; symbols: string[]; category: string | null; tone: number | null; importance: number | null; link: string | null; detail: string | null }
 export interface Feed { count: number; items: FeedItem[]; names: Record<string, string> }
-export interface CalEvent { symbol: string; date: string; kind: string; title: string; detail: string; days: number; mine: boolean }
+export interface CalEvent { symbol: string; date: string; kind: string; title: string; detail: string; days: number; sessions?: number | null; mine: boolean }
 export interface Calendar { today: string; events: CalEvent[]; names: Record<string, string> }
 export interface KeyStats {
   price: number | null; prev_close: number | null; day_low: number | null; day_high: number | null; hi_52w: number | null; lo_52w: number | null; pos_52w: number | null
@@ -264,6 +269,119 @@ export interface GlobalList { rows: GlobalRow[]; groups: string[]; move_pct: num
 export interface GlobalMoveRow { date: string; pct: number; checked: boolean; headlines: GlobalHeadline[] }
 export interface GlobalNews { symbol: string; name: string; aliases: string[]; move_pct: number; moves: GlobalMoveRow[]; recent: GlobalHeadline[]; searching: boolean }
 export interface GlobalQuoteCard { symbol: string; name: string; group: string; aliases: string[]; quote: GlobalQuote | null }
+export interface QPoint { time: string; value: number }
+type QFigs = Record<string, unknown> & { missing?: Record<string, string> }
+export interface PortfolioQuant {
+  curve: { available: boolean; reason?: string; start?: string; money_in?: number; money_out?: number; dividends?: number; skipped?: string[]
+    entry_estimated?: string[]; fee_pct_per_side?: number; figures?: QFigs; relative?: QFigs; aspi_figures?: QFigs
+    charts?: { portfolio: QPoint[]; aspi: QPoint[]; drawdown: QPoint[]; pnl: QPoint[]; value: QPoint[]; monthly: QuantReport['charts']['monthly'] } }
+  risk: { available: boolean; reason?: string; total_value?: number; sessions?: number; from?: string; to?: string; volatility?: number; beta?: number | null
+    diversification_ratio?: number | null; var95_lkr?: number; cvar95_lkr?: number; var95_pct?: number; cvar95_pct?: number; any_thin?: boolean
+    rows?: { symbol: string; label: string; value: number; weight: number; volatility: number; risk_share: number; thin: boolean; share_no_trade: number | null }[]
+    correlation?: { labels: string[]; matrix: number[][] }
+    stress?: { horizon: string; sessions: number; from: string; to: string; aspi: number; portfolio_pct: number; portfolio_lkr: number; beta_pct: number; beta_lkr: number; estimated: string[] }[] }
+  rate: QuantReport['meta']['rate']; sessions_per_year: number; gs_quant: string
+}
+export interface ListBasket {
+  id: number; name: string; available: boolean; reason?: string; symbols?: string[]; missing?: string[]; too_new?: string[]; start?: string; end?: string
+  limited_by?: string | null; rebalance_day_range?: [number, number]; figures?: QFigs; hold_figures?: QFigs; aspi_figures?: QFigs; relative?: QFigs
+  charts?: { basket: QPoint[]; hold: QPoint[]; aspi: QPoint[] }
+}
+export interface LabParam { key: string; label: string; default: number; min: number; max: number; step: number }
+export interface LabRuleDef { type: string; label: string; help: string; params: LabParam[] }
+export type LabLeaf = { type: string } & Record<string, number | string>
+export type LabRule = LabLeaf | { op: 'all' | 'any'; rules: LabRule[] } | { op: 'not'; rule: LabRule }
+export interface LabExit { hold_days?: number | null; stop_pct?: number | null; target_pct?: number | null; trail_pct?: number | null; rule?: LabRule | null }
+export interface LabSpec { name?: string; symbols?: string[]; years: number | 'all'; capital: number; max_positions: number; basis: 'total' | 'price'; slippage_pct: number; entry: LabRule; exit: LabExit }
+export interface LabCatalog {
+  rules: LabRuleDef[]; presets: { id: string; name: string; blurb: string; spec: Partial<LabSpec> }[]
+  defaults: { capital: number; years: number; basis: 'total' | 'price'; max_positions: number; slippage_pct: number; brokerage_pct: number }
+  stocks: { symbol: string; label: string; name: string | null; sessions: number }[]; max_symbols: number
+}
+type LabFigs = Record<string, number | string | null | Record<string, string>> & { missing?: Record<string, string> }
+export interface LabResult {
+  spec: LabSpec & { name: string; symbols: string[] }
+  meta: { universe: string[]; start: string; end: string; sessions: number; sessions_per_year: number; rate: QuantReport['meta']['rate']; hold_stocks: number; of_stocks: number
+    brokerage_pct: number; slippage_pct: number; entry_text: string; exit_text: string; seconds: number; gs_quant: string }
+  parity: { ok: boolean; max_rel_diff: number; sessions_compared: number; engine_trades: number; own_trades: number; fills_differing: number }
+  charts: { strategy: QPoint[]; hold: QPoint[]; aspi: QPoint[]; cash: QPoint[]; drawdown: QPoint[]; invested: QPoint[] }
+  figures: LabFigs; hold_figures: LabFigs; aspi_figures: LabFigs; relative: LabFigs
+  stats: { trades: number; open_at_end: number; wins: number; win_rate: number | null; avg_win: number | null; avg_loss: number | null; profit_factor: number | null
+    avg_sessions: number | null; best: number | null; worst: number | null; exposure: number | null; turnover_per_year: number | null
+    brokerage: number; slippage: number; interest: number; min_cash: number; overdrawn_days: number }
+  trades: { rows: { stock: string; in: string; out: string | null; sessions: number | null; qty: number; ret: number; pnl: number; costs: number; why: string }[]; total: number; shown: number }
+  halves: { name: string; from: string; to: string; total_return: number; sharpe: number | null; hold_total_return: number | null; hold_sharpe: number | null; trades: number }[]
+  luck: { runs: number; total: { median: number; p5: number; p95: number; beat: number | null }; sharpe?: { median: number; p5: number; p95: number; beat: number; runs: number }
+    bins: { from: number; to: number; count: number }[] } | null
+  dividends: { left_out?: Record<string, number> }
+  summary: string[]
+}
+export interface LabRun { id: string; status: 'running' | 'done' | 'error'; progress: number; stage: string; cached: boolean; elapsed: number; error?: string; result?: LabResult }
+export interface LabSaved { name: string; spec: LabSpec; saved_at: string }
+type LabFigs2 = Record<string, number | string | null | Record<string, string>> & { missing?: Record<string, string> }
+export interface EventCatalog {
+  company_kinds: { id: string; label: string; count: number }[]; shock_sources: { id: string; label: string }[]; world_stocks: { id: string; label: string }[]
+  stocks: { id: string; label: string }[]; before: number; after: number; min_n: number
+}
+export type EventSpec = { kind: 'company'; event: string; symbols: string[]; adjust: 'market' | 'none' }
+  | { kind: 'shock'; source: string; direction: 'down' | 'up' | 'abs'; threshold_pct: number; response: string; adjust: 'market' | 'none' }
+export interface EventStudy {
+  available: boolean; reason?: string; notes?: string[]
+  meta: { title: string; response: string; adjusted: boolean; n_events?: number; n_dates?: number; before?: number; after?: number; min_n?: number; start?: string; end?: string; reacts?: string }
+  path?: { day: number; mean: number | null; se: number | null; n: number }[]
+  horizons?: { sessions: number; mean: number | null; median: number | null; positive: number | null; t: number | null; n: number }[]
+  pre?: { mean: number | null; t: number | null; n: number }
+  table?: { stock: string; date: string; day0: number | null; car5: number | null; car20: number | null }[]
+  summary?: string[]
+}
+export interface CorrOptions { indices: { id: string; label: string }[]; sectors: { id: string; label: string }[]; cse: { id: string; label: string }[]; world: { id: string; label: string }[]; max: number }
+export interface CorrResult {
+  ids: string[]; labels: string[]; thin: boolean[]; cse: boolean[]; matrix: (number | null)[][]; n: number[][]; significant: boolean[][]
+  pairs: { a: string; b: string; r: number; n: number; t: number | null; significant: boolean }[]; missing: string[]; window: string; freq: string; start: string; end: string; notes: string[]
+  rolling?: { a: string; b: string; window: number; points: QPoint[] }
+}
+export interface BasketResult {
+  available: boolean; reason?: string; name: string; symbols?: string[]; missing?: string[]; too_new?: string[]; start?: string; end?: string; limited_by?: string | null
+  weights?: { symbol: string; weight: number }[]; weights_note?: string | null; rebalance?: string; rebalance_day_range?: [number, number] | null
+  figures?: LabFigs2; hold_figures?: LabFigs2; aspi_figures?: LabFigs2; relative?: LabFigs2; charts?: { basket: QPoint[]; hold: QPoint[]; aspi: QPoint[] }
+}
+export interface CoverageEntry { module: string; status: 'used' | 'recreated' | 'not_possible' | 'not_applicable' | 'plumbing'; what: string; where: string | null; stage: string | null; why: string | null }
+export interface MarketRisk {
+  available: boolean; reason?: string; as_of?: string; sessions_per_year?: number; summary?: string[]
+  volatility?: { now: number; percentile: number; regime: 'calm' | 'normal' | 'stormy'; median: number; window: number; recent: number | null; points: QPoint[] }
+  drawdown?: { now: number; max_1y: number | null; points: QPoint[] }
+  year?: Record<string, number | null>
+  correlation?: Record<string, { label: string; now: number; all: number; points: QPoint[] }>
+}
+export interface EqsField { id: string; label: string; kind: 'num' | 'text' | 'bool'; unit: string; group: string; help: string; ops: string[] }
+export type EqsValue = number | string | boolean | (number | string)[]
+export interface EqsFilter { field: string; op: string; value: EqsValue }
+export interface EqsSpec { name?: string; filters: EqsFilter[]; sort: { field: string; dir: 'asc' | 'desc' }; limit: number }
+export interface EqsCatalog { fields: EqsField[]; presets: { id: string; name: string; blurb: string; spec: Partial<EqsSpec> }[]; max_filters: number; max_rows: number }
+export interface EqsResult {
+  spec: EqsSpec; total: number; matched: number; shown: number; columns: string[]; notes: string[]
+  rows: { symbol: string; name: string | null; sector: string | null; mine: boolean; held: boolean; values: Record<string, number | string | boolean | null> }[]
+}
+export interface QuantReport {
+  meta: {
+    symbol: string; label: string; kind: 'cse' | 'world' | 'index'; currency: string; window: string; basis: 'total' | 'price'
+    bench: { id: string; label: string }; benchmarks: { id: string; label: string }[]; sessions_per_year: number
+    rate: { rate_pct: number; as_of: string | null; source: string; stale: boolean }
+    dividends: { count: number; from: string | null; applies: boolean; left_out?: number; approx?: number }
+    thin: { share_no_trade: number | null; thin: boolean; limit?: number }; start: string | null; end: string | null; gs_quant: string
+  }
+  figures: Record<string, number | string | null | { month: string; return: number } | Record<string, string>> & { missing: Record<string, string> }
+  relative: Record<string, number | null | Record<string, string>> & { missing: Record<string, string> }
+  charts: {
+    drawdown: QPoint[]; rolling_vol?: QPoint[]; rolling_beta?: QPoint[]; rolling_corr?: QPoint[]; zscore?: QPoint[]
+    histogram: { bins: { from: number; to: number; count: number }[]; var95?: number; mean?: number; n?: number }
+    monthly: { years: { year: number; months: Record<string, number>; year_return: number | null; partial: boolean }[]
+      seasonal: { month: number; average: number | null; years: number; positive: number | null; t: number | null }[] }
+    decomposition: { available: boolean; reason?: string; trend?: QPoint[]; adjusted?: QPoint[]; price?: QPoint[] }
+    regression?: { available: boolean; reason?: string; frequency?: string; observations?: number; r_squared?: number; rows?: { factor: string; coefficient: number; t: number }[] }
+  }
+  summary: string[]
+}
 export interface AllStocksData { lists: WatchList[]; count: number; rows: AllStock[] }
 export interface HealthSource { key: string; label: string; as_of: string | null; stale: boolean; kind: 'session' | 'days' | 'time' }
 export interface StepResult { ok: boolean; s?: number; error?: string; n?: number; failed?: Record<string, string>; failed_feeds?: string[] }
@@ -271,6 +389,7 @@ export interface Health {
   status: 'ok' | 'partial' | 'stale' | 'failed'; session: string; expected: string; running: boolean; stale: string[]; sources: HealthSource[]
   run: { run_date: string | null; ok: boolean; at: string | null; late: boolean; attempts: number; failed_steps: string[]; analysed?: number | null
     steps?: Record<string, StepResult>; errors?: Record<string, string> | null; late_note?: string | null; message?: string | null }
+  spikes?: { count: number; items: { symbol: string; date: string; close: number; neighbours: number[] }[] }
 }
 export interface Overnight { notes: { series: string; text: string }[]; note: string }
 export interface Regime { state: 'risk_on' | 'risk_off' | 'mixed' | 'unknown'; label?: string; text: string; facts: string[]; note?: string; breadth?: number | null; overnight?: Overnight | null }
@@ -360,7 +479,12 @@ export const api = {
   world: () => req<World>('/api/world'),
   health: () => req<Health>('/api/health'),
   addPosition: (p: Partial<PositionRow>) => req('/api/positions', { method: 'POST', body: JSON.stringify(p) }),
-  closePosition: (id: number, exit_date: string, exit_price: number, review?: string) => req(`/api/positions/${id}/close`, { method: 'POST', body: JSON.stringify({ exit_date, exit_price, review: review || null }) }),
+  closePosition: (id: number, exit_date: string, exit_price: number, review?: string, quantity?: number) => req<{ ok: boolean; sold: number; remaining: number }>(`/api/positions/${id}/close`, { method: 'POST', body: JSON.stringify({ exit_date, exit_price, review: review || null, quantity: quantity ?? null }) }),
+  editPosition: (id: number, changes: Record<string, unknown>) => req<{ ok: boolean }>(`/api/positions/${id}`, { method: 'PUT', body: JSON.stringify(changes) }),
+  costs: () => req<CostInfo>('/api/costs'),
+  dismissCorp: (id: number) => req<{ ok: boolean; dismissed: number }>(`/api/positions/${id}/corp-ack`, { method: 'POST' }),
+  eqsCatalog: () => req<EqsCatalog>('/api/eqs/catalog'),
+  eqsRun: (spec: EqsSpec) => req<EqsResult>('/api/eqs/run', { method: 'POST', body: JSON.stringify(spec) }),
   globalList: () => req<GlobalList>('/api/global'),
   worldAdd: (query: string, group: string) => req<{ symbol: string; name: string }>('/api/global', { method: 'POST', body: JSON.stringify({ query, group }) }),
   worldEdit: (s: string, e: { group?: string; aliases?: string[]; name?: string }) => req(`/api/global/${encodeURIComponent(s)}`, { method: 'PUT', body: JSON.stringify(e) }),
@@ -372,6 +496,25 @@ export const api = {
   worldNews: (s: string) => req<GlobalNews>(`/api/global/${encodeURIComponent(s)}/news`),
   compare: (ids: string[]) => req<{ series: Record<string, { label: string; points: { time: string; value: number }[]; error?: string }> }>(`/api/compare?symbols=${encodeURIComponent(ids.join(','))}`),
   compareOptions: () => req<{ indices: { id: string; label: string }[]; cse: { id: string; label: string; name: string }[]; world: { id: string; label: string; name: string }[] }>('/api/compare/options'),
+  labCatalog: () => req<LabCatalog>('/api/lab/catalog'),
+  labRun: (spec: LabSpec) => req<LabRun>('/api/lab/run', { method: 'POST', body: JSON.stringify(spec) }),
+  labStatus: (id: string) => req<LabRun>(`/api/lab/run/${id}`),
+  labSaved: () => req<LabSaved[]>('/api/lab/saved'),
+  labSave: (name: string, spec: LabSpec) => req<LabSaved[]>('/api/lab/saved', { method: 'PUT', body: JSON.stringify({ name, spec }) }),
+  labDelete: (name: string) => req<LabSaved[]>(`/api/lab/saved?name=${encodeURIComponent(name)}`, { method: 'DELETE' }),
+  labEventCatalog: () => req<EventCatalog>('/api/lab/events/catalog'),
+  labEvents: (spec: EventSpec) => req<EventStudy>('/api/lab/events', { method: 'POST', body: JSON.stringify(spec) }),
+  labCorrOptions: () => req<CorrOptions>('/api/lab/corr/options'),
+  labCorr: (body: { ids: string[]; window: string; freq: string; pair?: [number, number] }) => req<CorrResult>('/api/lab/corr', { method: 'POST', body: JSON.stringify(body) }),
+  labBasket: (body: { symbols: string[]; weights: 'equal' | 'inverse_vol' | Record<string, number>; rebalance: string; window: string }) => req<BasketResult>('/api/lab/basket', { method: 'POST', body: JSON.stringify(body) }),
+  labCoverage: () => req<{ version: string; marquee: string; entries: CoverageEntry[] }>('/api/lab/coverage'),
+  marketRisk: () => req<MarketRisk>('/api/market/risk'),
+  portfolioQuant: () => req<PortfolioQuant>('/api/portfolio/quant'),
+  portfolioBaskets: (window: string) => req<ListBasket[]>(`/api/portfolio/baskets?window=${window}`),
+  quant: (s: string, world: boolean, window: string, basis: string, bench?: string) => {
+    const sp = new URLSearchParams({ window }); if (!world) sp.set('basis', basis); if (bench) sp.set('bench', bench)
+    return req<QuantReport>(`/api/${world ? 'global' : 'stocks'}/${encodeURIComponent(s)}/quant?${sp}`)
+  },
   heatmap: () => req<Heatmap>('/api/heatmap'),
   feed: (f: { scope: string; kind: string; tone: string; q: string; days: number; symbol?: string }) => {
     const sp = new URLSearchParams({ scope: f.scope, kind: f.kind, tone: f.tone, q: f.q, days: String(f.days) }); if (f.symbol) sp.set('symbol', f.symbol)

@@ -23,7 +23,7 @@ from sqlalchemy import func, select
 
 from .strategy.recommend import plan_summary, split_engines
 from . import engine as eng
-from . import accounts, alerts_api, auth, globalstocks_api, market_api, ingest, jobs, journal, portfolio, screener, telegram_bot
+from . import accounts, alerts_api, auth, eqs, globalstocks_api, market_api, position_ops, quant_api, ingest, jobs, journal, portfolio, screener, telegram_bot
 from .auth import User, current_user, require_admin
 from .config import FRONTEND_DIST, env, pattern_catalog, settings
 from .cse_client import CDN
@@ -73,6 +73,7 @@ app = FastAPI(title="CSE Advisor", lifespan=lifespan)
 app.include_router(alerts_api.router)         # alerts, inbox, notes
 app.include_router(market_api.router)         # heatmap, news feed, calendar, key stats, quote card
 app.include_router(globalstocks_api.router)   # world stocks (GLB)
+app.include_router(quant_api.router)          # quant figures (QNT, gs-quant maths)
 
 PUBLIC_API = {"/api/auth/config"}
 
@@ -336,10 +337,9 @@ def _all_listed() -> list[dict[str, Any]]:
     return rows
 
 
-@app.get("/api/stocks/all")
-def all_stocks(u: User = Depends(current_user)) -> dict[str, Any]:
-    """Every listed security with its latest price, and where it sits for this account: on which lists, held, and whether it
-    meets the candidate rule (SCR)."""
+def _stock_rows(u: User) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Every listed security with its latest price and where it sits for this account; each row also carries `scr` (its row in the
+    latest candidate ranking, if it is liquid enough to be in it) and `quant` (its one-year risk figures, when known)."""
     try:
         listed = _all_listed()
     except Exception as exc:  # noqa: BLE001 - the CSE endpoints are unofficial
@@ -354,11 +354,39 @@ def all_stocks(u: User = Depends(current_user)) -> dict[str, Any]:
     with SessionLocal() as s:
         from . import listed_meta
         kinds = listed_meta.lookup(s)
-    rows = [{**r, "sector": kinds.get(r["symbol"], {}).get("sector"), "industry": kinds.get(r["symbol"], {}).get("industry"),
-             "lists": lists.get(r["symbol"], []), "held": r["symbol"] in held,
+    from .quant import columns as qcols
+    with SessionLocal() as s:
+        stored = qcols.for_symbols(s, list(ingest.watchlist_symbols(s)))      # the tracked stocks, from stored prices (exactly the QNT figures)
+    quant = {k: r["quant"] for k, r in cand.items() if r.get("quant")}        # the liquid ones, from the last candidate run
+    quant.update(stored)
+    rows = [{**r, "quant": quant.get(r["symbol"]), "sector": kinds.get(r["symbol"], {}).get("sector"), "industry": kinds.get(r["symbol"], {}).get("industry"),
+             "lists": lists.get(r["symbol"], []), "held": r["symbol"] in held, "mine": bool(lists.get(r["symbol"])) or r["symbol"] in held, "scr": cand.get(r["symbol"]),
              "candidate": ({"qualifies": cand[r["symbol"]]["qualifies"], "hits": cand[r["symbol"]]["hits"], "rs_rank": cand[r["symbol"]]["rs_rank"]}
                            if r["symbol"] in cand else None)} for r in listed]
-    return {"lists": overview, "count": len(rows), "rows": rows}
+    return rows, overview
+
+
+@app.get("/api/stocks/all")
+def all_stocks(u: User = Depends(current_user)) -> dict[str, Any]:
+    """Every listed security with its latest price, and where it sits for this account: on which lists, held, and whether it
+    meets the candidate rule (SCR)."""
+    rows, overview = _stock_rows(u)
+    return {"lists": overview, "count": len(rows), "rows": [{k: v for k, v in r.items() if k not in ("scr", "mine")} for r in rows]}
+
+
+@app.get("/api/eqs/catalog")
+def eqs_catalog(_: User = Depends(current_user)) -> dict[str, Any]:
+    return eqs.catalog()
+
+
+@app.post("/api/eqs/run")
+def eqs_run(body: dict[str, Any], u: User = Depends(current_user)) -> dict[str, Any]:
+    """Your own screen over every listed stock (see eqs.py)."""
+    rows, _ = _stock_rows(u)
+    try:
+        return eng._jsonable(eqs.run(rows, body))
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from None
 
 
 # ============================================================================ stock data
@@ -866,7 +894,20 @@ class PositionIn(BaseModel):
 class PositionClose(BaseModel):
     exit_date: date
     exit_price: float
+    quantity: int | None = None        # fewer than you hold = a partial sell (the rest stays open)
     review: str | None = None          # optional "what went right / wrong", saved as a note tagged review
+
+
+class PositionEdit(BaseModel):
+    """Fields left out are unchanged; stop / target / notes can be set to null to clear them."""
+    entry_date: date | None = None
+    entry_price: float | None = None
+    quantity: int | None = None
+    stop: float | None = None
+    target: float | None = None
+    notes: str | None = None
+    exit_date: date | None = None      # closed positions only
+    exit_price: float | None = None
 
 
 @app.get("/api/positions")
@@ -911,6 +952,7 @@ def _exit_warnings(s, symbol: str, a: Analysis | None) -> list[dict[str, Any]]:
 
 def _positions(uid: str) -> list[dict[str, Any]]:
     with SessionLocal() as s:
+        acked = accounts.get_pref(s, uid, position_ops.ACK_KEY) or {}
         out = []
         for p in s.scalars(select(Position).where(Position.user_id == uid).order_by(Position.closed, Position.entry_date.desc())):
             a = accounts.view(s, uid, _latest(s, p.symbol))
@@ -923,7 +965,8 @@ def _positions(uid: str) -> list[dict[str, Any]]:
                         "review_smc": ((a.recommendation or {}).get("smc") or {}).get("position_review") if a else None,
                         "verdict": a.verdict if a else None, "verdict_analyst": a.verdict_analyst if a else None,
                         "verdict_smc": a.verdict_smc if a else None,
-                        "warnings": [] if p.closed else _exit_warnings(s, p.symbol, a)})
+                        "warnings": [] if p.closed else _exit_warnings(s, p.symbol, a),
+                        "corp_since_entry": position_ops.corp_hints(s, p, acked.get(str(p.id), []))})
         return eng._jsonable(out)
 
 
@@ -948,17 +991,58 @@ def _own_position(s, u: User, pid: int) -> Position:
     return p
 
 
-@app.post("/api/positions/{pid}/close")
-def close_position(pid: int, c: PositionClose, u: User = Depends(current_user)) -> dict[str, Any]:
+@app.get("/api/costs")
+def costs(_: User = Depends(current_user)) -> dict[str, Any]:
+    """The all-in fee per side and how it splits (for the close dialog and the add form); the parts always add up to the rate."""
+    return position_ops.fee_breakdown()
+
+
+@app.put("/api/positions/{pid}")
+def edit_position(pid: int, e: PositionEdit, u: User = Depends(current_user)) -> dict[str, Any]:
+    """Correct a recorded position (open or closed). Only the fields sent change; stop / target / notes may be cleared with null."""
+    sent = e.model_fields_set
+    changes = {k: getattr(e, k) for k in sent}
+    for k in ("entry_date", "entry_price", "quantity"):          # these can't be cleared
+        if k in changes and changes[k] is None:
+            del changes[k]
     with SessionLocal.begin() as s:
         p = _own_position(s, u, pid)
-        p.closed, p.exit_date, p.exit_price = True, c.exit_date, c.exit_price
+        try:
+            position_ops.apply_edit(p, changes)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from None
+        if "quantity" in changes or "entry_price" in changes:       # you have dealt with any split / bonus note for it
+            position_ops.acknowledge(s, p)
         sym = p.symbol
-        if c.review and c.review.strip():            # "what went right / wrong" becomes a note tagged review
-            s.add(Note(user_id=u.uid, symbol=sym, position_id=p.id, body=c.review.strip()[:alerts_api.MAX_BODY], tags=["review"]))
     with SessionLocal.begin() as s:
         accounts.refresh_review(s, u.uid, sym)
     return {"ok": True}
+
+
+@app.post("/api/positions/{pid}/corp-ack")
+def acknowledge_corp(pid: int, u: User = Depends(current_user)) -> dict[str, Any]:
+    """Dismiss the "a split / bonus / rights issue happened after you bought" note for a position."""
+    with SessionLocal.begin() as s:
+        n = position_ops.acknowledge(s, _own_position(s, u, pid))
+    return {"ok": True, "dismissed": n}
+
+
+@app.post("/api/positions/{pid}/close")
+def close_position(pid: int, c: PositionClose, u: User = Depends(current_user)) -> dict[str, Any]:
+    """Sell a position, or part of it (`quantity` below what you hold: the sold shares become a closed position of their own)."""
+    with SessionLocal.begin() as s:
+        p = _own_position(s, u, pid)
+        before = p.quantity
+        try:
+            done = position_ops.close_position(s, p, c.exit_date, c.exit_price, c.quantity)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from None
+        sym, remaining = p.symbol, (0 if p.closed else p.quantity)
+        if c.review and c.review.strip():            # "what went right / wrong" becomes a note tagged review
+            s.add(Note(user_id=u.uid, symbol=sym, position_id=done.id, body=c.review.strip()[:alerts_api.MAX_BODY], tags=["review"]))
+    with SessionLocal.begin() as s:
+        accounts.refresh_review(s, u.uid, sym)
+    return {"ok": True, "sold": before - remaining, "remaining": remaining}
 
 
 @app.delete("/api/positions/{pid}")

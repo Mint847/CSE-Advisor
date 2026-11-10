@@ -183,7 +183,8 @@ def _explain_levels(expl: dict, verdict: str, plan: dict | None, entries: list[d
         rel = fundamentals.get("relative") or {}
         bits = []
         if r.get("nav_per_share"):
-            bits.append(f"NAV per share {r['nav_per_share']:.2f} vs price {close:.2f} ({r['price_to_nav_discount_pct']:+.0f}%)")
+            disc = r.get("price_to_nav_discount_pct")          # can be missing when the NAV exists but the discount could not be worked out (ACME, 10 Nov 2026)
+            bits.append(f"NAV per share {r['nav_per_share']:.2f} vs price {close:.2f}" + (f" ({disc:+.0f}%)" if disc is not None else ""))
         if rel.get("pe_vs_market_pct") is not None:
             bits.append(f"P/E {rel['pe_vs_market_pct']:+.0f}% vs the market's {rel['market_pe']:g}")
         if rel.get("pbv_vs_market_pct") is not None:

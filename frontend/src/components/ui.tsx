@@ -84,7 +84,7 @@ export function Spinner({ label = 'Loading…' }: { label?: string }) {
 }
 
 export function ErrorBox({ msg }: { msg: string }) {
-  return <div className="border border-bear/60 bg-bear/10 p-2.5 text-sm text-bear">{msg}</div>
+  return <div role="alert" className="border border-bear/60 bg-bear/10 p-2.5 text-sm text-bear">{msg}</div>
 }
 
 /** On/off switch (button with role=switch), larger hit target than a checkbox. */

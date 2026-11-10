@@ -25,20 +25,10 @@ import pandas as pd
 
 from .backtest import CACHE, OUT
 from .factor_study import SPLIT, clustered_t, md
+from .quant.stats_tests import corr, r_t  # noqa: F401
 
 START = pd.Timestamp("2013-01-01")
 SERIES = ("brent", "ndx", "spx", "usdlkr", "gold", "nifty")
-
-
-def r_t(r: float, n: int) -> float:
-    if n < 4 or not np.isfinite(r) or abs(r) >= 1:
-        return float("nan")
-    return float(r * math.sqrt((n - 2) / (1 - r * r)))
-
-
-def corr(x: pd.Series, y: pd.Series) -> tuple[float, int]:
-    d = pd.concat([x, y], axis=1).dropna()
-    return (float(d.iloc[:, 0].corr(d.iloc[:, 1])) if len(d) >= 8 else float("nan")), len(d)
 
 
 def link(x: pd.Series, y: pd.Series, split: pd.Timestamp = SPLIT) -> dict[str, Any]:

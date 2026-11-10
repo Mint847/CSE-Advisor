@@ -2,11 +2,21 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api, fmt, fmtBig, type AllStock, type AllStocksData } from '../api'
+import ExportCsv from '../components/ExportCsv'
+import QuantCells from '../components/QuantCells'
+import type { CsvColumn } from '../export/csv'
 import { ErrorBox, Spinner } from '../components/ui'
 
-type Key = 'ticker' | 'name' | 'sector' | 'last' | 'chg' | 'volume' | 'turnover'
+type Key = 'ticker' | 'name' | 'sector' | 'last' | 'chg' | 'volume' | 'turnover' | 'vol' | 'sharpe' | 'beta' | 'mdd'
 type Filter = 'all' | 'mine' | 'cand' | 'traded'
 /** JKH for an ordinary share; TKYO.X for the non-voting share (same company, another security). */
+const CSV: CsvColumn<AllStock>[] = [
+  { header: 'Ticker', get: r => r.symbol.split('.')[0] }, { header: 'Name', get: r => r.name }, { header: 'Sector', get: r => r.sector }, { header: 'Industry', get: r => r.industry },
+  { header: 'Price', get: r => r.price }, { header: 'Change today %', get: r => r.change_pct }, { header: 'Volume', get: r => r.volume }, { header: 'Turnover (LKR)', get: r => r.turnover },
+  { header: 'Market cap (LKR)', get: r => r.market_cap }, { header: 'Volatility 1Y %', get: r => (r.quant?.vol == null ? null : r.quant.vol * 100) }, { header: 'Sharpe 1Y', get: r => r.quant?.sharpe },
+  { header: 'Beta 1Y', get: r => r.quant?.beta }, { header: 'Worst fall 1Y %', get: r => (r.quant?.mdd == null ? null : r.quant.mdd * 100) },
+  { header: 'Meets the candidate rule', get: r => r.candidate?.qualifies }, { header: 'Held', get: r => r.held }, { header: 'On a list', get: r => r.lists.length > 0 },
+]
 const label = (symbol: string) => { const [t, c] = symbol.split('.'); return c && c !== 'N0000' ? t + '.' + c[0] : t }
 const FILTERS: [Filter, string][] = [['all', 'All'], ['mine', 'On my lists'], ['cand', 'Candidates'], ['traded', 'Traded']]
 
@@ -41,6 +51,10 @@ export default function AllStocks({ onChanged }: { onChanged: () => void }) {
         case 'last': return r.price ?? -1
         case 'chg': return r.change_pct ?? -999
         case 'volume': return r.volume ?? -1
+        case 'vol': return r.quant?.vol ?? (sort.dir === 1 ? 1e9 : -1e9)            // stocks without figures always sort last
+        case 'sharpe': return r.quant?.sharpe ?? (sort.dir === 1 ? 1e9 : -1e9)
+        case 'beta': return r.quant?.beta ?? (sort.dir === 1 ? 1e9 : -1e9)
+        case 'mdd': return r.quant?.mdd ?? (sort.dir === 1 ? 1e9 : -1e9)
         default: return r.turnover ?? -1
       }
     }
@@ -84,7 +98,7 @@ export default function AllStocks({ onChanged }: { onChanged: () => void }) {
             <option value="">All sectors</option>{sectors.map(s => <option key={s} value={s}>{s}</option>)}
           </select>
         )}
-        <span className="ml-auto text-[11px] text-muted">{rows.length} shown</span>
+        <span className="ml-auto flex items-center gap-2 text-[11px] text-muted">{rows.length} shown<ExportCsv name="all-stocks" columns={CSV} rows={rows} /></span>
       </div>
       {err && <div className="p-2"><ErrorBox msg={err} /></div>}
       {note && !err && <p className="px-2 pt-2 text-[12px] text-amber" role="status">{note}</p>}
@@ -100,6 +114,7 @@ export default function AllStocks({ onChanged }: { onChanged: () => void }) {
                 {th('chg', 'Chg%', 'text-right')}
                 {th('volume', 'Volume', 'hidden text-right lg:table-cell')}
                 {th('turnover', 'Turnover', 'hidden text-right md:table-cell')}
+                {th('vol', '1Y vol', 'hidden text-right xl:table-cell')}{th('sharpe', 'Sharpe', 'hidden text-right xl:table-cell')}{th('beta', 'Beta', 'hidden text-right xl:table-cell')}{th('mdd', 'Worst fall', 'hidden text-right xl:table-cell')}
                 <th title="Meets the candidate rule on the CANDIDATES page">Cand</th>
                 <th>Lists</th>
               </tr>
@@ -119,6 +134,7 @@ export default function AllStocks({ onChanged }: { onChanged: () => void }) {
                       {r.change_pct == null ? '–' : `${r.change_pct >= 0 ? '+' : ''}${r.change_pct.toFixed(2)}`}</td>
                     <td className="hidden text-right text-muted num lg:table-cell">{fmtBig(r.volume)}</td>
                     <td className="hidden text-right num md:table-cell">{fmtBig(r.turnover)}</td>
+                    <QuantCells q={r.quant} cls="hidden text-right num xl:table-cell" />
                     <td className="text-center" title={r.candidate ? (r.candidate.qualifies ? 'Meets the candidate rule' : `Meets ${r.candidate.hits} of 3 parts of the rule`) : 'Not ranked (not liquid enough)'}>
                       {r.candidate ? <span className={r.candidate.qualifies ? 'text-bull' : 'text-muted'}>{r.candidate.qualifies ? '●' : '○'}</span> : <span className="text-muted">–</span>}</td>
                     <td onClick={e => e.stopPropagation()}>
@@ -137,7 +153,7 @@ export default function AllStocks({ onChanged }: { onChanged: () => void }) {
                   </tr>
                 )
               })}
-              {rows.length === 0 && <tr><td colSpan={9} className="p-6 text-center text-muted">No stocks match.</td></tr>}
+              {rows.length === 0 && <tr><td colSpan={13} className="p-6 text-center text-muted">No stocks match.</td></tr>}
             </tbody>
           </table>
         </div>

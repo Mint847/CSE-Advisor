@@ -93,6 +93,11 @@ export function HealthPanel() {
           {r.failed_steps.length > 0 && <span className="text-amber"> Did not update: {r.failed_steps.join(', ')}.</span>}
           {' '}The app checks every 15 minutes and runs the evening job by itself when a session is missing.
         </p>
+        <p className="mt-2 text-[12px]" aria-label="Price spike check">
+          {h.spikes && h.spikes.count > 0
+            ? <span className="text-amber">Price check: {h.spikes.count} one-session price spike{h.spikes.count > 1 ? 's' : ''} in the stored daily prices (a close far above or below both neighbours, so likely a bad tick){h.spikes.items.length ? <>: {h.spikes.items.map(x => `${x.symbol.split('.')[0]} ${x.date}`).join(', ')}</> : null}. They can distort risk figures and signals.</span>
+            : <span className="text-muted">Price check: no single-session price spikes in the stored daily prices.</span>}
+        </p>
         {r.steps && (
           <div className="scroll-thin mt-2 overflow-x-auto">
             <table className="bb-table [&_td]:whitespace-normal">

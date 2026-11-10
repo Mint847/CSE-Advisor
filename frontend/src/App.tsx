@@ -17,6 +17,8 @@ import Market from './pages/Market'
 import News from './pages/News'
 import Notes from './pages/Notes'
 import Positions from './pages/Positions'
+import Eqs from './pages/Eqs'
+import QuantLab from './pages/QuantLab'
 import Quote from './pages/Quote'
 import Screener from './pages/Screener'
 import Settings from './pages/Settings'
@@ -39,6 +41,8 @@ const FKEYS: { key: string; label: string; to?: string; help?: boolean }[] = [
   { key: '', label: 'HMAP', to: '/heatmap' },
   { key: '', label: 'NEWS', to: '/news' },
   { key: '', label: 'CAL', to: '/calendar' },
+  { key: '', label: 'QLAB', to: '/lab' },
+  { key: '', label: 'EQS', to: '/eqs' },
 ]
 
 function useClock() {
@@ -156,7 +160,7 @@ export default function App() {
               </button>
             ) : (
               <NavLink key={k.key} to={k.to!} end={k.to === '/'} className={link}>
-                {k.key && <span className="bg-menu px-1 text-white">{k.key}</span>}{({ WL: 'WATCHLIST', PORT: 'POSITIONS', MKT: 'MARKET', SCR: 'CANDIDATES', JRN: 'JOURNAL', ALRT: 'ALERTS', NOTE: 'NOTES', GLB: 'WORLD', HMAP: 'HEATMAP', NEWS: 'NEWS', CAL: 'CALENDAR' } as Record<string, string>)[k.label] ?? 'SETTINGS'}
+                {k.key && <span className="bg-menu px-1 text-white">{k.key}</span>}{({ WL: 'WATCHLIST', PORT: 'POSITIONS', MKT: 'MARKET', SCR: 'CANDIDATES', JRN: 'JOURNAL', ALRT: 'ALERTS', NOTE: 'NOTES', GLB: 'WORLD', HMAP: 'HEATMAP', NEWS: 'NEWS', CAL: 'CALENDAR', QLAB: 'QUANT LAB', EQS: 'SCREENER' } as Record<string, string>)[k.label] ?? 'SETTINGS'}
               </NavLink>
             ))}
             <span className="ml-auto hidden shrink-0 pl-3 text-[11px] text-muted md:inline">type <b className="text-yellow">/</b> for the command line · <b className="text-yellow">HELP &lt;GO&gt;</b></span>
@@ -181,6 +185,8 @@ export default function App() {
           <Route path="/news" element={<News />} />
           <Route path="/calendar" element={<Calendar />} />
           <Route path="/quote/:symbol" element={<Quote />} />
+          <Route path="/lab" element={<QuantLab />} />
+          <Route path="/eqs" element={<Eqs />} />
           <Route path="/notes" element={<Notes />} />
           <Route path="/settings" element={<Settings />} />
           <Route path="/account" element={<Account />} />

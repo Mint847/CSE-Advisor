@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { ColorType, HistogramSeries, LineSeries, createChart } from 'lightweight-charts'
 import { api, fmt, ticker, type Headline, type MarketData, type Mover } from '../api'
+import MarketRisk from '../components/MarketRisk'
 import WorldPanel from '../components/WorldPanel'
 import { Section, Spinner, Stat } from '../components/ui'
 
@@ -92,6 +93,7 @@ export default function Market() {
         <Stat label="Session" value={m.open ? 'open' : 'closed'} tone={m.open ? 'bull' : undefined} sub="from CSE market status" />
       </div>
       <Section title="All Share Price Index (ASPI)"><div ref={box} className="h-72" /></Section>
+      <MarketRisk />
 
       <div className="grid gap-2 lg:grid-cols-2 [&>*]:min-w-0">
         <Section title="Foreign net flow (purchases − sales, LKR)">

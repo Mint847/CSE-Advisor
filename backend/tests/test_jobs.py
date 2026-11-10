@@ -134,6 +134,8 @@ def _stub_run(monkeypatch, failing=()):
     monkeypatch.setattr(news_feeds, "fetch", ok("headlines", {"items": 5, "new": 1, "sources": 8, "failed": ["Daily News"]}))
     monkeypatch.setattr(macro, "top_up", ok("world", {"brent": 15, "ndx": 15}))
     monkeypatch.setattr(listed_meta, "top_up", ok("sectors", {"skipped": "test"}))     # no network, no real database
+    from cse_advisor.quant import rates
+    monkeypatch.setattr(rates, "top_up", ok("rates", {"tbill_skipped": "test"}))       # no network, no real database
     monkeypatch.setattr(journal, "record_day", ok("journal", {"recorded": 0, "scored": 0}))
     monkeypatch.setattr(screener, "start_background", lambda: None)
     monkeypatch.setattr(jobs, "read_headlines", lambda syms: {"skipped": "llm.enabled is false"})

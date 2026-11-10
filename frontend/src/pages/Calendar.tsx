@@ -5,6 +5,16 @@ import { ErrorBox, Spinner } from '../components/ui'
 
 interface MyEvent { id: string; date: string; title: string; symbol?: string }
 const PREF = 'calendar_events'
+/** Weekdays from today up to a date (the CSE's future holidays are not known, so it can be a session or two too high). */
+const weekdaysUntil = (iso: string): number | null => {
+  const t = new Date(); t.setHours(0, 0, 0, 0)
+  const d = new Date(`${iso}T00:00:00`)
+  if (d < t) return null
+  let n = 0
+  for (const c = new Date(t); c < d; c.setDate(c.getDate() + 1)) if (c.getDay() !== 0 && c.getDay() !== 6) n++
+  return n
+}
+const countdown = (n: number) => (n === 0 ? 'today' : n === 1 ? '1 session' : `${n} sessions`)
 const KIND: Record<string, { label: string; cls: string }> = {
   ex_dividend: { label: 'XD', cls: 'bg-amber text-black' },
   dividend_payment: { label: 'PAY', cls: 'bg-bull text-black' },
@@ -13,7 +23,7 @@ const KIND: Record<string, { label: string; cls: string }> = {
   corporate: { label: 'CORP', cls: 'bg-orange-400 text-black' },
   mine: { label: 'MINE', cls: 'bg-panel-3 text-yellow' },
 }
-interface Ev { date: string; kind: string; title: string; detail: string; symbol?: string; own?: MyEvent }
+interface Ev { date: string; kind: string; title: string; detail: string; symbol?: string; own?: MyEvent; sessions?: number | null }
 
 const iso = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 const longDate = (s: string) => new Date(s + 'T00:00:00').toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })
@@ -33,7 +43,7 @@ export default function Calendar() {
 
   const saveMine = (next: MyEvent[]) => { setMine(next); api.putPref(PREF, next).catch(e => setErr(String(e.message ?? e))) }
   const events: Ev[] = useMemo(() => [
-    ...(data?.events ?? []).map(e => ({ date: e.date, kind: e.kind, title: e.title, detail: e.detail, symbol: e.symbol })),
+    ...(data?.events ?? []).map(e => ({ date: e.date, kind: e.kind, title: e.title, detail: e.detail, symbol: e.symbol, sessions: e.sessions })),
     ...mine.map(m => ({ date: m.date, kind: 'mine', title: m.title, detail: '', symbol: m.symbol, own: m })),
   ].sort((a, b) => a.date.localeCompare(b.date)), [data, mine])
   const byDay = useMemo(() => { const m = new Map<string, Ev[]>(); events.forEach(e => m.set(e.date, [...(m.get(e.date) ?? []), e])); return m }, [events])
@@ -92,7 +102,8 @@ export default function Calendar() {
                   <ul className="border border-line">
                     {shown.map((e, i) => (
                       <li key={i} className="flex gap-2 border-t border-line/60 px-2 py-1.5 text-[12px] first:border-t-0">
-                        <span className="w-[64px] shrink-0 text-[10px] text-muted num">{e.date.slice(5)}<br />{new Date(e.date + 'T00:00:00').toLocaleDateString('en-GB', { weekday: 'short' })}</span>
+                        <span className="w-[64px] shrink-0 text-[10px] text-muted num">{e.date.slice(5)}<br />{new Date(e.date + 'T00:00:00').toLocaleDateString('en-GB', { weekday: 'short' })}
+                          {(e.sessions ?? weekdaysUntil(e.date)) != null && <span className="block normal-case" title="Weekdays until then: the CSE’s future holidays are not known, so this can be a session or two too high">≈ {countdown(e.sessions ?? weekdaysUntil(e.date)!)}</span>}</span>
                         <span className="min-w-0 flex-1">
                           <span className={`chip mr-1 !leading-[14px] ${KIND[e.kind]?.cls ?? 'bg-panel-3'}`}>{KIND[e.kind]?.label ?? e.kind}</span>
                           {e.symbol && <Link to={`/stock/${e.symbol}?tab=cn`} title={names[e.symbol]} className="mr-1 font-semibold text-amber">{ticker(e.symbol)}</Link>}

@@ -151,7 +151,11 @@ def calendar(scope: str = Query("mine", pattern="^(mine|all)$"), days: int = Que
             _CAL["rows"], _CAL["at"], _CAL["syms"] = _calendar_rows(sorted(tracked)), time.monotonic(), sorted(tracked)
         rows = _CAL["rows"]
     end = (date.today() + timedelta(days=days)).isoformat()
-    shown = [{**r, "mine": r["symbol"] in mine} for r in rows if r["date"] <= end and (scope == "all" or r["symbol"] in mine)]
+    import numpy as _np
+    today = date.today()
+    # sessions until the event: weekdays from today to then (the CSE's future holidays are not known, so it is approximate)
+    shown = [{**r, "mine": r["symbol"] in mine, "sessions": int(_np.busday_count(today, date.fromisoformat(r["date"]))) if r["date"] >= today.isoformat() else None}
+             for r in rows if r["date"] <= end and (scope == "all" or r["symbol"] in mine)]
     return {"today": date.today().isoformat(), "events": shown, "names": {r["symbol"]: names.get(r["symbol"]) for r in shown}}
 
 

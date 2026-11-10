@@ -33,6 +33,7 @@ import numpy as np
 import pandas as pd
 
 from .backtest import CACHE, OUT, _fee
+from .quant.stats_tests import clustered_t, nw_t  # noqa: F401  (re-exported: other studies import them from here)
 from .analysis.selection import features
 from .plan_study import enter as plan_enter
 
@@ -52,29 +53,6 @@ CANDLES = {"hammer", "inverted_hammer", "hanging_man", "shooting_star", "bullish
 
 
 # ---------------------------------------------------------------------------------------------------- statistics
-def nw_t(x: Any, lag: int) -> float:
-    """t-statistic of the mean with Newey-West (Bartlett) standard errors."""
-    x = np.asarray(x, float)
-    x = x[np.isfinite(x)]
-    n = len(x)
-    if n < 12:
-        return float("nan")
-    e = x - x.mean()
-    s = float(e @ e) / n
-    for k in range(1, min(lag, n - 1) + 1):
-        s += 2 * (1 - k / (lag + 1)) * float(e[k:] @ e[:-k]) / n
-    return float(x.mean() / math.sqrt(s / n)) if s > 0 else float("nan")
-
-
-def clustered_t(e: pd.Series, groups: pd.Series) -> float:
-    e = e.dropna()
-    if len(e) < 30:
-        return float("nan")
-    m = e.mean()
-    se = float(np.sqrt(((e - m).groupby(groups.loc[e.index]).sum() ** 2).sum())) / len(e)
-    return float(m / se) if se > 0 else float("nan")
-
-
 def md(tbl: pd.DataFrame, ints: tuple[str, ...] = ("n", "trades", "calls")) -> list[str]:
     cols = list(tbl.columns)
     out = ["| | " + " | ".join(cols) + " |", "|---|" + "---|" * len(cols)]

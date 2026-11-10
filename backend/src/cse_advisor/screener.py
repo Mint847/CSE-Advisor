@@ -63,7 +63,7 @@ def _num(x: Any) -> float | None:
 
 
 def build_rows(snap: dict[str, dict[str, Any]], names: dict[str, str], watch: set[str], min_turnover: float,
-               aspi_ret120: float | None) -> list[dict[str, Any]]:
+               aspi_ret120: float | None, quant: dict[str, dict[str, Any]] | None = None) -> list[dict[str, Any]]:
     """snap: symbol -> the last feature row (dict). Ranks 120-day return among the liquid stocks, applies the rule."""
     liquid = {k: v for k, v in snap.items() if (_num(v.get("turn")) or 0) >= min_turnover}
     ret = pd.Series({k: _num(v.get("ret120")) for k, v in liquid.items()}).dropna()
@@ -85,7 +85,7 @@ def build_rows(snap: dict[str, dict[str, Any]], names: dict[str, str], watch: se
                      "ret20": _num(v.get("ret20")), "ret60": _num(v.get("ret60")), "ret120": r120, "rs120": _num(v.get("rs120")),
                      "dist52": _num(v["dist52"]), "ext20": _num(v.get("ext20")), "trendup": trend, "above50": bool(v.get("above50")), "turn": _num(v["turn"]), "rs_rank": _num(rk),
                      "qualifies": qualifies(trend, v["dist52"], rk), "hits": hits, "missing": missing, "reason": reason,
-                     "on_watchlist": sym in watch})
+                     "on_watchlist": sym in watch, "quant": (quant or {}).get(sym)})
     rows.sort(key=lambda r: (not r["qualifies"], -r["hits"], -(r["rs_rank"] or 0)))
     return rows
 
@@ -113,6 +113,10 @@ def run(force_universe: bool = False) -> dict[str, Any]:
         progress.update(total=len(todo) + 1, phase="full list (liquidity re-check)" if refresh_due else "liquid stocks")
         a = _bars("ASI", nbars, upto)
         aspi = a["close"] if a is not None else pd.Series(dtype=float)
+        from .quant import columns as qcols, rates as qrates, series as qseries
+        with SessionLocal() as qs:
+            q_rates, q_af = qrates.tbill_series(qs), qseries.cse_sessions_per_year(qs)
+        quant: dict[str, dict[str, Any]] = {}
         progress["done"] += 1
         snap: dict[str, dict[str, Any]] = {}
         failed: list[str] = []
@@ -131,11 +135,17 @@ def run(force_universe: bool = False) -> dict[str, Any]:
             row = F.iloc[-1].to_dict()
             row.update(close=float(d["close"].iloc[-1]), chg1d=float(d["close"].iloc[-1] / d["close"].iloc[-2] - 1) if len(d) > 1 else None)
             snap[sym] = row
+            try:                                                # 1-year volatility, Sharpe, beta, worst fall: the same maths as the QNT tab
+                q = qcols.figures(d["close"], aspi, q_rates, q_af)
+                if q:
+                    quant[sym] = q
+            except Exception as exc:  # noqa: BLE001 - the ranking must never fail because of an extra column
+                log.warning("screener quant %s: %s", sym, exc)
             last_bar = max(last_bar, d.index[-1]) if last_bar is not None else d.index[-1]
         if not snap or last_bar is None:
             return {"ok": False, "message": "no price data came back (TradingView may be unreachable)"}
         a120 = float(aspi.iloc[-1] / aspi.iloc[-121] - 1) if len(aspi) > 121 else None
-        rows = build_rows(snap, names, watch, min_turn, a120)
+        rows = build_rows(snap, names, watch, min_turn, a120, quant)
         meta = {"rule": RULE_TEXT, "tested": TESTED, "checked": len(todo), "failed": failed, "liquid": len(rows), "min_median_turnover_lkr": min_turn,
                 "qualifying": sum(r["qualifies"] for r in rows), "breadth_above50": round(sum(r["above50"] for r in rows) / len(rows), 3) if rows else None, "aspi_ret120": a120, "last_bar": last_bar.date().isoformat(),
                 "full_recheck": refresh_due, "seconds": round(time.time() - t0)}

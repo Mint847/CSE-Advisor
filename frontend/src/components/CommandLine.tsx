@@ -12,6 +12,7 @@ export const FUNCTIONS: { code: string; text: string; global?: boolean }[] = [
   { code: 'CN', text: 'Catalysts: results, dividends, director dealings, calendar, headlines' },
   { code: 'CAT', text: 'Same as CN (catalysts)' },
   { code: 'CACS', text: 'Corporate actions & data import' },
+  { code: 'QNT', text: 'Quant: risk and return figures, drawdown, beta, Sharpe (gs-quant maths)' },
   { code: 'NOTE', text: 'Notes on this stock' },
   { code: 'PAT', text: 'Open the pattern & layer chooser' },
   { code: '1M', text: 'Chart & engines on 1-minute bars' },
@@ -31,6 +32,8 @@ export const FUNCTIONS: { code: string; text: string; global?: boolean }[] = [
   { code: 'HMAP', text: 'Market heatmap by sector (size = market cap, colour = day change)', global: true },
   { code: 'NEWS', text: 'News & announcements feed (my stocks / all tracked)', global: true },
   { code: 'CAL', text: 'Calendar: results due, ex-dividend, payments, AGMs', global: true },
+  { code: 'QLAB', text: 'Quant Lab: test a buying and selling rule on past prices (gs-quant engine)', global: true },
+  { code: 'EQS', text: 'Your own screener: filter every listed stock on price, trend, risk and more', global: true },
   { code: 'ALRT', text: 'Alerts: your own price and pattern alerts, and the inbox', global: true },
   { code: 'NOTES', text: 'Notes on all your stocks (search, tags)', global: true },
   { code: 'SET', text: 'Settings & jobs', global: true },
@@ -38,9 +41,9 @@ export const FUNCTIONS: { code: string; text: string; global?: boolean }[] = [
   { code: 'ADD', text: 'Add a stock: ADD JKH', global: true },
   { code: 'HELP', text: 'Commands and keys', global: true },
 ]
-const TAB_OF: Record<string, string> = { GP: 'rec', CMP: 'cmp', SMC: 'smc', DES: 'des', LIQ: 'liq', CN: 'cn', CAT: 'cn', CACS: 'cacs', NOTE: 'note', PAT: 'rec' }
+const TAB_OF: Record<string, string> = { GP: 'rec', CMP: 'cmp', SMC: 'smc', DES: 'des', LIQ: 'liq', CN: 'cn', CAT: 'cn', CACS: 'cacs', QNT: 'qnt', NOTE: 'note', PAT: 'rec' }
 const TF_OF: Record<string, string> = { '1M': '1m', '5M': '5m', '15M': '15m', '1H': '1h', '4H': '4h', '1D': '1D', '1W': '1W' }
-const GLOBAL_ROUTE: Record<string, string> = { WL: '/', ALL: '/?view=all', PORT: '/positions', MKT: '/market', WEI: '/market', SCR: '/screener', JRN: '/journal', GLB: '/global', WORLD: '/global', HMAP: '/heatmap', NEWS: '/news', CAL: '/calendar', ALRT: '/alerts', ALERTS: '/alerts', NOTES: '/notes', SET: '/settings', ACCT: '/account' }
+const GLOBAL_ROUTE: Record<string, string> = { WL: '/', ALL: '/?view=all', PORT: '/positions', MKT: '/market', WEI: '/market', SCR: '/screener', JRN: '/journal', GLB: '/global', WORLD: '/global', HMAP: '/heatmap', NEWS: '/news', CAL: '/calendar', QLAB: '/lab', LAB: '/lab', EQS: '/eqs', SCREEN: '/eqs', ALRT: '/alerts', ALERTS: '/alerts', NOTES: '/notes', SET: '/settings', ACCT: '/account' }
 
 interface Props { onHelp: () => void; inputRef: React.RefObject<HTMLInputElement | null> }
 
